@@ -364,6 +364,8 @@ def run_ai_turn():
     threading.Thread(target=_thread, daemon=True).start()
 
 def main():
+    # Note: The sticky bar implementation mentioned in the request was not found in this file.
+    # Please provide the correct file or location where the sticky bar is implemented.
     state.config = load_config()
     state.memory = load_memory()
     if not state.config["models"]:
