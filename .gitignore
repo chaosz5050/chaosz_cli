@@ -18,3 +18,9 @@ logs/
 context/
 debug_write.py
 .codex
+
+# Personal / internal
+Chaosz_CLI_Todo.md
+quality_fixes_todo.md
+chaosz.md
+tests/
