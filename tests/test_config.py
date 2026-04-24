@@ -69,11 +69,11 @@ def test_process_memory_tags_multiple_tags(tmp_path):
         patch.object(state.reasoning, "memory", mem),
     ):
         result = cfg.process_memory_tags(
-            "[REMEMBER: about_user: name is René] "
+            "[REMEMBER: about_user: name is Alice] "
             "[REMEMBER: preferences: concise answers]"
         )
 
-    assert "name is René" in mem["about_user"]
+    assert "name is Alice" in mem["about_user"]
     assert "concise answers" in mem["preferences"]
     assert "[REMEMBER:" not in result
 
@@ -107,7 +107,7 @@ def test_build_system_prompt_includes_personality():
 
 def test_build_system_prompt_includes_memory():
     mem = {cat: [] for cat in cfg.VALID_CATEGORIES}
-    mem["about_user"] = ["name is René"]
+    mem["about_user"] = ["name is Alice"]
 
     with (
         patch.object(state.workspace, "working_dir", ""),
@@ -116,4 +116,4 @@ def test_build_system_prompt_includes_memory():
     ):
         prompt = cfg.build_system_prompt()
 
-    assert "name is René" in prompt
+    assert "name is Alice" in prompt
