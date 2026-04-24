@@ -9,18 +9,17 @@ PROVIDER_REGISTRY = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",
         "model":    "deepseek-v4-flash",
-        "reasoning_model": "deepseek-v4-pro",
         "context_window": 1000000,
         "max_output_tokens": 8192,
         "reasoning_max_output_tokens": 32768,
         "no_sampling_params": False,
-        "supports_thinking": True,
     },
     "kimi": {
         "base_url": "https://api.moonshot.ai/v1",
         "model":    "kimi-k2.5",
         "context_window": 256000,
         "max_output_tokens": 8192,
+        "reasoning_max_output_tokens": 32768,
         "no_sampling_params": True,   # Kimi rejects temperature/top_p
     },
     "gemini": {
@@ -46,6 +45,100 @@ PROVIDER_REGISTRY = {
         "local": True,                # no API key required
     },
 }
+
+_DEFAULT_PROVIDER_CAPABILITIES = {
+    "supports_reasoning_toggle": False,
+    "requires_reasoning_echo_on_tool_followup": False,
+    "supports_stream_usage": True,
+    "rejects_sampling_params": False,
+    "supports_prompt_cache_key": False,
+}
+
+PROVIDER_CAPABILITIES = {
+    "deepseek": {
+        "supports_reasoning_toggle": True,
+        "requires_reasoning_echo_on_tool_followup": True,
+    },
+    "kimi": {
+        "supports_reasoning_toggle": True,
+        "requires_reasoning_echo_on_tool_followup": True,
+        "rejects_sampling_params": True,
+        "supports_prompt_cache_key": True,
+    },
+    "gemini": {
+        "supports_stream_usage": False,
+    },
+    "ollama": {
+        "supports_reasoning_toggle": True,
+        "supports_stream_usage": False,
+    },
+}
+
+
+def get_provider_capabilities(provider_name: str) -> dict:
+    """Return normalized behavior flags for one provider."""
+    caps = dict(_DEFAULT_PROVIDER_CAPABILITIES)
+    caps.update(PROVIDER_CAPABILITIES.get(provider_name, {}))
+    reg = PROVIDER_REGISTRY.get(provider_name, {})
+    if reg.get("no_sampling_params"):
+        caps["rejects_sampling_params"] = True
+    if reg.get("local"):
+        caps["supports_stream_usage"] = False
+    return caps
+
+
+def provider_supports_reasoning(provider_name: str) -> bool:
+    return bool(get_provider_capabilities(provider_name)["supports_reasoning_toggle"])
+
+
+def provider_requires_reasoning_echo(provider_name: str) -> bool:
+    return bool(get_provider_capabilities(provider_name)["requires_reasoning_echo_on_tool_followup"])
+
+
+def get_effective_model(provider_name: str, provider_data: dict | None = None) -> str:
+    """Return the configured model used for requests for this provider."""
+    pdata = provider_data or {}
+    reg = PROVIDER_REGISTRY.get(provider_name, PROVIDER_REGISTRY["deepseek"])
+    return pdata.get("model") or reg.get("model") or "?"
+
+
+def get_effective_max_output_tokens(
+    provider_name: str,
+    provider_data: dict | None = None,
+    *,
+    reasoning_enabled: bool,
+) -> int:
+    """Return the output token budget for the active provider state."""
+    pdata = provider_data or {}
+    reg = PROVIDER_REGISTRY.get(provider_name, PROVIDER_REGISTRY["deepseek"])
+    base = pdata.get("max_output_tokens", reg.get("max_output_tokens", 8192))
+    if reasoning_enabled and provider_supports_reasoning(provider_name):
+        return reg.get("reasoning_max_output_tokens", base)
+    return base
+
+
+def sync_runtime_provider_state(
+    provider_name: str | None = None,
+    providers: dict | None = None,
+) -> None:
+    """Recompute the in-memory provider state from persisted config + reasoning flag."""
+    from chaosz.state import state
+
+    loaded_providers, active = load_providers()
+    providers = providers or loaded_providers
+    active_name = provider_name or active
+    pdata = providers.get(active_name) or {}
+    reg = PROVIDER_REGISTRY.get(active_name, PROVIDER_REGISTRY["deepseek"])
+
+    state.provider.active = active_name
+    state.provider.model = get_effective_model(active_name, pdata)
+    state.provider.max_ctx = pdata.get("context_window", reg.get("context_window", 4096))
+    state.provider.max_output_tokens = get_effective_max_output_tokens(
+        active_name,
+        pdata,
+        reasoning_enabled=state.reasoning.enabled,
+    )
+    state.provider.temperature = pdata.get("temperature", 0.7)
 
 
 def migrate_legacy_key(data: dict) -> dict:
@@ -169,7 +262,14 @@ def prepare_messages_for_ollama(messages: list) -> list:
     return result
 
 
-def build_api_params(provider_name: str, model: str, messages: list, tools: list | None = None) -> dict:
+def build_api_params(
+    provider_name: str,
+    model: str,
+    messages: list,
+    tools: list | None = None,
+    *,
+    stream: bool = True,
+) -> dict:
     """Build kwargs for client.chat.completions.create().
     Omits temperature/top_p for providers that reject them (e.g. Kimi).
     When tools is None, omits tools and tool_choice entirely.
@@ -179,11 +279,12 @@ def build_api_params(provider_name: str, model: str, messages: list, tools: list
     params: dict = {
         "model":     model,
         "messages":  messages,
-        "stream":    True,
+        "stream":    stream,
         "max_tokens": state.provider.max_output_tokens,
     }
+    caps = get_provider_capabilities(provider_name)
     # Enable usage tracking in the stream for OpenAI-compatible providers (DeepSeek/Kimi/etc)
-    if provider_name != "ollama":
+    if caps["supports_stream_usage"] and stream:
         params["stream_options"] = {"include_usage": True}
 
     if tools is not None:
@@ -191,21 +292,32 @@ def build_api_params(provider_name: str, model: str, messages: list, tools: list
         params["tool_choice"] = "auto"
 
     # Moonshot (Kimi) specific caching
-    if provider_name == "kimi":
+    if caps["supports_prompt_cache_key"]:
         params["extra_body"] = {"prompt_cache_key": state.session.id}
 
     # no_sampling_params providers (Kimi) must not receive temperature or top_p
     registry_entry = PROVIDER_REGISTRY.get(provider_name, {})
-    if not registry_entry.get("no_sampling_params"):
+    if not caps["rejects_sampling_params"]:
         params["temperature"] = state.provider.temperature
 
     # DeepSeek V4 thinking mode — ON by default, must be explicitly disabled when not reasoning.
     # Temperature and other sampling params are forbidden when thinking is enabled.
-    if provider_name == "deepseek" and registry_entry.get("supports_thinking"):
+    if provider_name == "deepseek" and provider_supports_reasoning(provider_name):
         thinking_type = "enabled" if state.reasoning.enabled else "disabled"
         params.setdefault("extra_body", {})["thinking"] = {"type": thinking_type}
         if state.reasoning.enabled:
             params.pop("temperature", None)   # unsupported in thinking mode
+            reasoning_out = registry_entry.get("reasoning_max_output_tokens")
+            if reasoning_out:
+                params["max_tokens"] = reasoning_out
+
+    # Kimi K2.5 also supports request-level thinking control and defaults to
+    # thinking enabled. Set it explicitly so /reason on|off actually matches
+    # request behavior instead of depending on provider defaults.
+    if provider_name == "kimi" and provider_supports_reasoning(provider_name):
+        thinking_type = "enabled" if state.reasoning.enabled else "disabled"
+        params.setdefault("extra_body", {})["thinking"] = {"type": thinking_type}
+        if state.reasoning.enabled:
             reasoning_out = registry_entry.get("reasoning_max_output_tokens")
             if reasoning_out:
                 params["max_tokens"] = reasoning_out
@@ -252,7 +364,7 @@ def get_available_models(provider: str) -> list[str]:
 
 
 def validate_provider_key(provider: str, api_key: str) -> tuple[bool, str]:
-    """Verify an API key with a cheap models.list() call.
+    """Verify an API key with a cheap provider-native generation call.
     For local providers (Ollama), checks connectivity instead of an API key.
     Returns (True, "") on success or (False, error_message) on failure.
     """
@@ -266,11 +378,49 @@ def validate_provider_key(provider: str, api_key: str) -> tuple[bool, str]:
             return True, ""
         except Exception:
             return False, "Ollama is not running — start it with: ollama serve"
+
+    def _is_model_lookup_error(message: str) -> bool:
+        lowered = message.lower()
+        return any(
+            needle in lowered for needle in (
+                "model does not exist",
+                "model not found",
+                "unknown model",
+                "404",
+                "not found",
+            )
+        )
+
     try:
+        model = defaults["model"]
+        if provider == "gemini":
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+            client.models.generate_content(
+                model=model,
+                contents="ping",
+                config={"max_output_tokens": 1},
+            )
+            return True, ""
+
         client = OpenAI(api_key=api_key, base_url=defaults["base_url"])
-        client.models.list()
+        params = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": False,
+            "max_tokens": 1,
+        }
+        if not defaults.get("no_sampling_params"):
+            params["temperature"] = 0
+        if provider in {"deepseek", "kimi"}:
+            params["extra_body"] = {"thinking": {"type": "disabled"}}
+        client.chat.completions.create(**params)
         return True, ""
     except AuthenticationError:
         return False, "Authentication failed — invalid API key."
     except Exception as e:
-        return False, f"Connection error: {e}"
+        message = str(e)
+        if _is_model_lookup_error(message):
+            return False, f"Validation failed: default model '{defaults['model']}' is unavailable for '{provider}'."
+        return False, f"Connection error: {message}"

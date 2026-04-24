@@ -13,6 +13,31 @@ ALWAYS_PROMPT_COMMANDS = {
     "mkswap", "swapon", "shred", "wipefs"
 }
 
+READ_ONLY_CMDS = {"cat", "ls", "grep", "find", "tree", "head", "tail", "rg", "ag", "ack", "less", "more"}
+DANGEROUS_OPS = {"|", ">", "<", "&", ";", "$", "`"}
+
+
+def is_command_allowed_by_session(command: str, allowed_set: set) -> bool:
+    """Check if command is in allowed_set, including whitelist logic for base commands."""
+    if command in allowed_set:
+        return True
+
+    words = command.strip().split()
+    if not words:
+        return False
+
+    base_cmd = os.path.basename(words[0])
+    
+    # Check for dangerous ops
+    if any(op in command for op in DANGEROUS_OPS):
+        return False
+        
+    if base_cmd in READ_ONLY_CMDS:
+        if base_cmd in allowed_set:
+            return True
+
+    return False
+
 
 def is_always_prompt_command(command: str) -> bool:
     """Return True only when a genuinely dangerous command appears as an actual

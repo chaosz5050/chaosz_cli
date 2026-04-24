@@ -8,8 +8,15 @@ from openai import APIError, AuthenticationError, RateLimitError
 from rich.text import Text
 
 from chaosz.config import build_system_prompt, process_memory_tags, CHAOSZ_DIR
-from chaosz.shell import is_always_prompt_command, tool_shell_exec
+from chaosz.shell import (
+    DANGEROUS_OPS,
+    READ_ONLY_CMDS,
+    is_always_prompt_command,
+    is_command_allowed_by_session,
+    tool_shell_exec,
+)
 from chaosz.state import _permission_event, state
+from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.stream_adapters import ToolCall, stream as _stream
 from chaosz.tools import FILE_TOOLS, TOOL_EXECUTORS, _build_diff, _build_op_summary, get_all_tools
 from chaosz.ui.stream_utils import unescape_tool_delta
@@ -172,6 +179,7 @@ def request_cancel() -> None:
 def run_ai_turn(app) -> None:
     def _thread():
         state.ui.is_thinking = True
+        show_plan_approval = False
         # Clean up any stale plan approval menu left from a previous turn
         app.call_from_thread(lambda: app.query("#plan-approval-menu").remove())
         app.call_from_thread(app._start_glitch)
@@ -417,15 +425,14 @@ def run_ai_turn(app) -> None:
                     )
                 parsed_tool_names = [tc["function_name"] for tc in tool_calls_parsed]
 
-                # Append the assistant's tool-call turn to the local message list.
-                # DeepSeek V4 thinking mode requires reasoning_content to be echoed back
-                # when tool calls are present, or the API returns HTTP 400.
+                # Some providers require reasoning_content to be echoed back on the
+                # assistant tool-call turn so multi-step tool use can continue.
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": full_response or None,
                     "tool_calls": tool_calls_for_msg,
                 }
-                if reasoning_content and state.reasoning.enabled and state.provider.active == "deepseek":
+                if reasoning_content and state.reasoning.enabled and provider_requires_reasoning_echo(state.provider.active):
                     assistant_msg["reasoning_content"] = reasoning_content
                 api_msgs.append(assistant_msg)
 
@@ -553,7 +560,7 @@ def run_ai_turn(app) -> None:
                         reason = tc_args.get("reason", "")
 
                         # Check session memory
-                        if command in state.permissions.shell_session_allowed:
+                        if is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
                             # Execute without prompting
                             log_status, result_content = tool_shell_exec(tc_args)
                         else:
@@ -571,6 +578,15 @@ def run_ai_turn(app) -> None:
                                 # If session granted, add to session memory
                                 if state.permissions.shell_session_granted and not always_prompt:
                                     state.permissions.shell_session_allowed.add(command)
+
+                                    # Extract base command and add it if it's safe read-only
+                                    words = command.strip().split()
+                                    if words:
+                                        base_cmd = os.path.basename(words[0])
+                                        if base_cmd in READ_ONLY_CMDS and not any(
+                                            op in command for op in DANGEROUS_OPS
+                                        ):
+                                            state.permissions.shell_session_allowed.add(base_cmd)
 
                                 # Check if sudo command
                                 if command.strip().startswith("sudo "):
@@ -812,11 +828,31 @@ def run_ai_turn(app) -> None:
             )
             app.call_from_thread(app._write, "", Text(f"Error: {e}", style="bold red"))
         finally:
+            # Capture post-turn routing inputs before resetting transient flags.
+            _was_plan_summarizing = state.ui.plan_summarizing
+            _was_plan_turn = state.ui.plan_mode or state.ui.plan_mode_this_turn
+            if not state.ui.plan_executing and not _was_plan_summarizing and _was_plan_turn:
+                _last_user = next(
+                    (m.get("content", "") for m in reversed(state.session.messages) if m.get("role") == "user"),
+                    "",
+                )
+                if not _last_user.startswith("All steps complete"):
+                    from chaosz.plan_driver import parse_plan_steps
+
+                    last_assistant = next(
+                        (m["content"] for m in reversed(state.session.messages) if m.get("role") == "assistant"),
+                        "",
+                    )
+                    steps = parse_plan_steps(last_assistant)
+                    if steps:
+                        state.ui.plan_steps = steps
+                        state.ui.plan_goal = _last_user
+                        state.ui.plan_mode = True  # promote to persistent so Discuss turns keep plan context
+                        show_plan_approval = True
+
             state.ui.is_thinking = False
             state.ui.cancel_requested = False
-            _was_plan_summarizing = state.ui.plan_summarizing
             state.ui.plan_summarizing = False
-            _was_plan_turn = state.ui.plan_mode or state.ui.plan_mode_this_turn
             state.ui.plan_mode_this_turn = False
             app.call_from_thread(app._stop_glitch)
             app.call_from_thread(app._set_input_label, "You: ")
@@ -828,7 +864,7 @@ def run_ai_turn(app) -> None:
                     from chaosz.plan_driver import build_step_prompt
                     from chaosz.session import append_to_live_session
                     state.ui.plan_step_index = next_index
-                    next_prompt = build_step_prompt(next_index, state.ui.plan_steps)
+                    next_prompt = build_step_prompt(next_index, state.ui.plan_steps, state.ui.plan_goal)
                     total = len(state.ui.plan_steps)
                     app.call_from_thread(
                         app._write, "",
@@ -842,6 +878,7 @@ def run_ai_turn(app) -> None:
                     state.ui.plan_executing = False
                     state.ui.plan_step_index = 0
                     state.ui.plan_steps = []
+                    state.ui.plan_goal = ""
                     state.ui.plan_mode = False        # belt-and-suspenders: ensures _was_plan_turn=False in summary turn
                     state.ui.plan_summarizing = True
                     from chaosz.session import append_to_live_session
@@ -853,29 +890,11 @@ def run_ai_turn(app) -> None:
                         Text("✓ All steps complete.", style="bold green")
                     )
                     app.call_from_thread(app._run_ai_turn)  # run_ai_turn takes only app; msg already in state
+            elif show_plan_approval:
+                app.call_from_thread(app._render_plan_approval_menu)
+                app.call_from_thread(lambda: setattr(state.ui, "mode", "PLAN_APPROVE"))
+                app.call_from_thread(lambda: app.query_one("#user-input").focus())
             else:
-                # If plan mode is on and the AI produced a numbered plan, show approval menu.
-                # Skip if we just finished a summary turn (flag check) OR if the last user
-                # message was the summary trigger (content check — immune to thread timing).
-                if not _was_plan_summarizing and _was_plan_turn:
-                    _last_user = next(
-                        (m.get("content", "") for m in reversed(state.session.messages) if m.get("role") == "user"),
-                        "",
-                    )
-                    if not _last_user.startswith("All steps complete"):
-                        from chaosz.plan_driver import parse_plan_steps
-                        last_assistant = next(
-                            (m["content"] for m in reversed(state.session.messages) if m.get("role") == "assistant"),
-                            "",
-                        )
-                        steps = parse_plan_steps(last_assistant)
-                        if steps:
-                            state.ui.plan_steps = steps
-                            state.ui.plan_mode = True  # promote to persistent so Discuss turns keep plan context
-                            app.call_from_thread(app._render_plan_approval_menu)
-                            app.call_from_thread(lambda: setattr(state.ui, "mode", "PLAN_APPROVE"))
-                            app.call_from_thread(lambda: app.query_one("#user-input").focus())
-                            return
                 app.call_from_thread(lambda: app.query_one("#user-input").focus())
 
     threading.Thread(target=_thread, daemon=True).start()

@@ -25,7 +25,7 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Reflection system** — AI automatically consolidates and prunes its memory after every 10 messages in the background, keeping context lean and retaining task flow via rolling summaries
 - **Prompt caching** — automatic cost reduction for DeepSeek and Kimi via session-aware caching
 - **Skill system** — activate on-demand task-mode overlays (coder, code-review, mcp-builder, or your own); stored as plain `.md` files in `~/.config/chaosz/skills/` so you can edit them at any time
-- **Reasoning mode** — toggle extended model reasoning output with `/reason on` (DeepSeek only; switches to deepseek-v4-pro)
+- **Reasoning mode** — toggle extended reasoning output with `/reason on` when supported by the active provider/model (DeepSeek, Kimi, and thinking-capable Ollama models)
 - **Personality** — set a custom AI personality that persists across sessions
 - **Context compaction** — `/compact` summarizes conversation history to free up context window space; auto-triggers at 90%
 - **Themes** — built-in color themes (default, amber, mono, green); switch live with `/theme`; drop a custom `.theme` file in `~/.config/chaosz/themes/` to add your own
@@ -93,7 +93,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/model add` | Interactive menu to add a new provider (`deepseek`, `kimi`, `gemini`, `ollama`) |
 | `/model del <provider>` | Remove a provider |
 | `/apikey` | Update API key for the current provider |
-| `/reason on\|off` | Toggle extended reasoning output (DeepSeek only — switches to deepseek-v4-pro) |
+| `/reason on\|off` | Toggle reasoning output when supported by the active provider/model |
 | `/personality set` | Enter a custom AI personality (multiline) |
 | `/personality view` | Show current personality |
 | `/personality clear` | Remove personality |
@@ -208,11 +208,11 @@ Kimi is excluded from temperature control — it rejects sampling parameters at 
 
 | Provider | Default Model | Context | Notes |
 |---|---|---|---|
-| `deepseek` | deepseek-v4-flash | 128K | Supports `/reason on` (switches to deepseek-v4-pro) |
-| `kimi` | kimi-k2.5 | 256K | Robust long-context and tool use; rejects temperature/top_p |
+| `deepseek` | deepseek-v4-flash | 128K | Supports request-level reasoning via `/reason on` |
+| `kimi` | kimi-k2.5 | 256K | Supports request-level reasoning via `/reason on`; rejects sampling params |
 | `gemini` | gemini-2.5-flash | 1M | Massively large context; native tool support via google-genai SDK |
 | `mistral` | mistral-large-latest | 32K | OpenAI-compatible API with full tool support and temperature control |
-| `ollama` | user-defined | model-dependent | Local inference — see [Limitations](#limitations--best-practices) |
+| `ollama` | user-defined | model-dependent | Local inference; `/reason` depends on the selected model's thinking support |
 
 ## File Operations
 

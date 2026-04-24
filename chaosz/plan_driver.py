@@ -31,10 +31,12 @@ def should_activate_step_driver() -> bool:
     return False
 
 
-def build_step_prompt(index: int, steps: list[str]) -> str:
+def build_step_prompt(index: int, steps: list[str], goal: str = "") -> str:
     total = len(steps)
     step_text = steps[index]
+    goal_line = f" Original goal: {goal}." if goal else ""
     return (
-        f"[Step {index + 1}/{total}] Execute ONLY this step and stop: {step_text}. "
+        f"[Step {index + 1}/{total} of {total}]{goal_line} "
+        f"Execute ONLY this step and stop: {step_text}. "
         f"Do not proceed to any further steps. When done, confirm what you did."
     )

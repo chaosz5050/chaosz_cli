@@ -7,8 +7,15 @@ from openai import APIError, AuthenticationError, RateLimitError
 from rich.text import Text
 
 from chaosz.config import build_system_prompt, process_memory_tags
+from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session
-from chaosz.shell import is_always_prompt_command, tool_shell_exec
+from chaosz.shell import (
+    DANGEROUS_OPS,
+    READ_ONLY_CMDS,
+    is_always_prompt_command,
+    is_command_allowed_by_session,
+    tool_shell_exec,
+)
 from chaosz.state import _permission_event, state
 from chaosz.stream_adapters import ToolCall, stream as _stream
 from chaosz.tools import FILE_TOOLS, TOOL_EXECUTORS, _build_diff, _build_op_summary
@@ -54,6 +61,7 @@ def run_compose_turn(app, _user_input: str) -> None:
                 full_response = ""
                 finish_reason_seen: str | None = None
                 reasoning_started = False
+                reasoning_content = ""
                 
                 tool_delta_buffer = ""
                 tool_line_buffer = ""
@@ -67,6 +75,8 @@ def run_compose_turn(app, _user_input: str) -> None:
                         app.call_from_thread(app._append_reasoning_line, chunk.reasoning_line)
                     if chunk.reasoning_block:
                         app.call_from_thread(app._write_reasoning_block, chunk.reasoning_block)
+                    if chunk.reasoning_content:
+                        reasoning_content = chunk.reasoning_content
                     if chunk.text:
                         full_response += chunk.text
                     if chunk.tool_delta:
@@ -169,6 +179,8 @@ def run_compose_turn(app, _user_input: str) -> None:
                     "content": full_response or None,
                     "tool_calls": tool_calls_for_msg,
                 })
+                if reasoning_content and state.reasoning.enabled and provider_requires_reasoning_echo(state.provider.active):
+                    api_msgs[-1]["reasoning_content"] = reasoning_content
 
                 # Working directory gate — fires lazily on first tool call requiring it
                 if state.workspace.working_dir is None:
@@ -215,7 +227,7 @@ def run_compose_turn(app, _user_input: str) -> None:
                         reason = tc_args.get("reason", "")
                         _log_status = "ok"
 
-                        if command in state.permissions.shell_session_allowed:
+                        if is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
                             _log_status, result_content = tool_shell_exec(tc_args)
                         else:
                             always_prompt = is_always_prompt_command(command)
@@ -232,6 +244,16 @@ def run_compose_turn(app, _user_input: str) -> None:
                             if state.permissions.granted:
                                 if state.permissions.shell_session_granted and not always_prompt:
                                     state.permissions.shell_session_allowed.add(command)
+
+                                    # Extract base command and add it if it's safe read-only
+                                    import os
+                                    words = command.strip().split()
+                                    if words:
+                                        base_cmd = os.path.basename(words[0])
+                                        if base_cmd in READ_ONLY_CMDS and not any(
+                                            op in command for op in DANGEROUS_OPS
+                                        ):
+                                            state.permissions.shell_session_allowed.add(base_cmd)
 
                                 if command.strip().startswith("sudo "):
                                     state.ui.mode = "PASSWORD"

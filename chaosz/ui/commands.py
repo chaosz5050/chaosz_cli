@@ -5,7 +5,14 @@ from rich.text import Text
 
 from chaosz.state import state
 from chaosz.config import VALID_CATEGORIES, add_memory, save_memory, save_reason_enabled
-from chaosz.providers import PROVIDER_REGISTRY, load_providers, save_providers, validate_provider_key
+from chaosz.providers import (
+    PROVIDER_REGISTRY,
+    load_providers,
+    provider_supports_reasoning,
+    save_providers,
+    sync_runtime_provider_state,
+    validate_provider_key,
+)
 import chaosz.ui.themes as _T
 
 
@@ -35,7 +42,7 @@ def handle_command(app, user_input: str) -> None:
             f"  [{c}]/files[/{c}]                      - Show file operation log for this session\n"
             f"  [{c}]/stats[/{c}]                      - Show token usage for current session\n"
             f"  [{c}]/compact[/{c}]                     - Summarize conversation history and reset token counter\n"
-            f"  [{c}]/reason[/{c}] [{a}]on|off[/{a}]             - Show/hide model reasoning output\n"
+            f"  [{c}]/reason[/{c}] [{a}]on|off[/{a}]             - Toggle reasoning output when supported by the active provider\n"
             f"  [{c}]/header[/{c}]                      - Toggle the ASCII logo header on/off\n"
             f"  [{c}]/skill[/{c}] [{a}]list[/{a}]               - Interactive skill selection menu\n"
             f"  [{c}]/skill[/{c}] [{a}]add[/{a}] [{a}]<name>[/{a}]          - Create a new skill\n"
@@ -171,19 +178,33 @@ def handle_command(app, user_input: str) -> None:
 
     elif cmd == "/reason":
         sub = args[1].lower() if len(args) > 1 else "status"
+        provider = state.provider.active
+        supported = provider_supports_reasoning(provider)
         if sub == "on":
+            if not supported:
+                app._write("", Text(f"Reasoning mode is not supported for '{provider}'.", style="yellow"))
+                return
             state.reasoning.enabled = True
             save_reason_enabled(True)
+            sync_runtime_provider_state(provider)
             app._write("", Text(f"Reasoning ON ({state.provider.model}). Responses will include model thinking.", style="green"))
             app._update_footer()
         elif sub == "off":
+            if not supported:
+                app._write("", Text(f"Reasoning mode is not supported for '{provider}'.", style="yellow"))
+                return
             state.reasoning.enabled = False
             save_reason_enabled(False)
+            sync_runtime_provider_state(provider)
             app._write("", Text(f"Reasoning OFF ({state.provider.model}).", style="dim"))
             app._update_footer()
         else:
             status = "ON" if state.reasoning.enabled else "OFF"
-            app._write("", Text(f"Reasoning is currently {status}. Use /reason on or /reason off.", style="cyan"))
+            if supported:
+                msg = f"Reasoning is currently {status} for '{provider}'. Use /reason on or /reason off."
+            else:
+                msg = f"Reasoning is currently {status}, but '{provider}' does not use it."
+            app._write("", Text(msg, style="cyan"))
 
     elif cmd == "/model":
         sub = args[1].lower() if len(args) > 1 else "list"

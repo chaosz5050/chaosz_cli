@@ -3,7 +3,7 @@ from datetime import datetime
 
 from chaosz.state import state
 from chaosz.config import load_config, load_memory, load_personality, load_reason_enabled, load_input_history, load_active_skill, load_theme
-from chaosz.providers import load_providers, PROVIDER_REGISTRY
+from chaosz.providers import load_providers, sync_runtime_provider_state
 from chaosz.config import CHAOSZ_DIR
 from chaosz.shell import _setup_session_logs
 from chaosz.session import startup_cleanup, restore_session
@@ -59,13 +59,7 @@ def main():
     state.workspace.working_dir = os.getcwd()
 
     providers, active = load_providers()
-    state.provider.active = active
-    pdata = providers.get(active) or {}
-    fallback = PROVIDER_REGISTRY.get(active, PROVIDER_REGISTRY["deepseek"])
-    state.provider.model = pdata.get("model") or fallback.get("model") or "?"
-    state.provider.max_ctx = pdata.get("context_window", fallback["context_window"])
-    state.provider.max_output_tokens = pdata.get("max_output_tokens", fallback.get("max_output_tokens", 8192))
-    state.provider.temperature = pdata.get("temperature", 0.7)
+    sync_runtime_provider_state(active, providers)
 
     startup_cleanup()
     restore_session()

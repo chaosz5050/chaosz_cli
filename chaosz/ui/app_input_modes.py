@@ -6,7 +6,13 @@ from textual.containers import VerticalScroll
 from textual.widgets import Input, Static
 
 from chaosz.config import save_config, save_input_history, save_personality, save_active_skill
-from chaosz.providers import PROVIDER_REGISTRY, load_providers, save_providers, validate_provider_key
+from chaosz.providers import (
+    PROVIDER_REGISTRY,
+    load_providers,
+    save_providers,
+    sync_runtime_provider_state,
+    validate_provider_key,
+)
 from chaosz.state import _permission_event, state
 from chaosz.ui.commands import handle_command
 from chaosz.ui.widgets import HistoryInput
@@ -318,11 +324,7 @@ def _handle_mode_model_del_confirm(app, user_input: str) -> bool:
         new_active = active if active != provider else next(iter(providers), "deepseek")
         save_providers(providers, new_active)
         if active == provider:
-            state.provider.active = new_active
-            pdata = providers.get(new_active) or {}
-            fallback = PROVIDER_REGISTRY.get(new_active, PROVIDER_REGISTRY["deepseek"])
-            state.provider.model = pdata.get("model") or fallback.get("model") or "?"
-            state.provider.max_ctx = pdata.get("context_window", fallback["context_window"])
+            sync_runtime_provider_state(new_active, providers)
             app._update_footer()
         if provider == "ollama" and model_name:
             app._write("", Text(f"Provider 'ollama' removed from config.", style="green"))

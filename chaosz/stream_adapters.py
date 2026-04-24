@@ -30,7 +30,7 @@ class StreamChunk:
     text: str = ""             # text fragment — append to full_response
     reasoning_line: str = ""   # one complete reasoning line — stream to UI immediately
     reasoning_block: str = ""  # post-hoc reasoning block — pass to _write_reasoning_block
-    reasoning_content: str = ""  # full accumulated reasoning text — for DeepSeek API echo-back
+    reasoning_content: str = ""  # full accumulated reasoning text — for provider follow-up echo-back
     tool_calls: list = field(default_factory=list)  # complete ToolCall list — final chunk only
     tool_delta: str = ""       # incremental tool argument delta
     tool_name: str = ""        # tool being streamed
@@ -111,6 +111,21 @@ def _flush_think_buf(think_buf: str, in_think: bool) -> Iterator[StreamChunk]:
             yield StreamChunk(reasoning_line=lines[-1])
     else:
         yield StreamChunk(text=think_buf)
+
+
+def _ollama_think_value(model: str, reasoning_enabled: bool):
+    """Return the best-effort Ollama think value for one model family."""
+    if not reasoning_enabled:
+        return None
+    lower = model.lower()
+    if "gpt-oss" in lower:
+        return "medium"
+    return True
+
+
+def _ollama_needs_prompt_think_tag(model: str) -> bool:
+    """Some Ollama models still respond better when nudged with a think tag."""
+    return model.lower().startswith("gemma")
 
 
 def _iter_gemini(messages: list, tools, model: str) -> Iterator[StreamChunk]:
@@ -249,8 +264,10 @@ def _iter_gemini(messages: list, tools, model: str) -> Iterator[StreamChunk]:
 def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
     from chaosz.providers import get_native_ollama_client, prepare_messages_for_ollama
 
-    # Gemma 4: inject <|think|> to trigger native reasoning
-    if state.reasoning.enabled and messages and messages[-1]["role"] == "user":
+    think_value = _ollama_think_value(model, state.reasoning.enabled)
+
+    # Gemma-family models are more reliable when prompted explicitly.
+    if think_value and _ollama_needs_prompt_think_tag(model) and messages and messages[-1]["role"] == "user":
         if not messages[-1]["content"].strip().endswith("<|think|>"):
             messages = list(messages)
             messages[-1] = {**messages[-1], "content": messages[-1]["content"] + "\n<|think|>"}
@@ -261,7 +278,7 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
         messages=prepare_messages_for_ollama(messages),
         tools=tools,
         stream=True,
-        think=True if state.reasoning.enabled else None,
+        think=think_value,
         options={"temperature": state.provider.temperature},
     )
 

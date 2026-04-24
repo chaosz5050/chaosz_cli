@@ -7,7 +7,7 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import RichLog, Static
 
-from chaosz.providers import PROVIDER_REGISTRY, load_providers, save_providers
+from chaosz.providers import PROVIDER_REGISTRY, load_providers, save_providers, sync_runtime_provider_state
 from chaosz.state import state
 from chaosz.ui.themes import get_theme
 
@@ -286,15 +286,7 @@ def confirm_model_switch(app, provider: str) -> None:
         return
     pdata = providers[provider]
     save_providers(providers, provider)
-    state.provider.active = provider
-    reg = PROVIDER_REGISTRY.get(provider, {})
-    state.provider.model = pdata.get("model") or reg.get("model") or "?"
-    if state.reasoning.enabled and "reasoning_model" in reg:
-        state.provider.model = reg["reasoning_model"]
-    state.provider.max_ctx = pdata.get("context_window", reg.get("context_window", 4096))
-    state.provider.max_output_tokens = pdata.get("max_output_tokens", reg.get("max_output_tokens", 8192))
-    if state.reasoning.enabled and "reasoning_max_output_tokens" in reg:
-        state.provider.max_output_tokens = reg["reasoning_max_output_tokens"]
+    sync_runtime_provider_state(provider, providers)
     state.ui.ctx_estimated_tokens = 0
     app._update_footer()
     app._write("", Text(f"Switched to {provider}. Fetching model versions...", style="dim"))
@@ -759,7 +751,7 @@ def confirm_plan_approval(app, choice: str) -> None:
         state.ui.plan_executing = True
         from chaosz.plan_driver import build_step_prompt
         from chaosz.session import append_to_live_session
-        prompt = build_step_prompt(0, steps)
+        prompt = build_step_prompt(0, steps, state.ui.plan_goal)
         state.session.messages.append({"role": "user", "content": prompt})
         append_to_live_session("user", prompt)
         app._write("", Text(f"▶ Step 1/{len(steps)}", style=f"dim {get_theme().accent}"))
@@ -767,6 +759,7 @@ def confirm_plan_approval(app, choice: str) -> None:
 
     elif choice == "Discuss":
         state.ui.plan_steps = []
+        state.ui.plan_goal = ""
         state.ui.plan_executing = False
         app._write(
             "",
@@ -777,6 +770,7 @@ def confirm_plan_approval(app, choice: str) -> None:
 
     elif choice == "Reject":
         state.ui.plan_steps = []
+        state.ui.plan_goal = ""
         state.ui.plan_executing = False
         state.ui.plan_mode_this_turn = False
         app._write("", Text("Plan rejected.", style="dim red"))
@@ -791,21 +785,14 @@ def confirm_model_version_switch(app, model_name: str, temperature: float | None
     providers[active]["model"] = model_name
     if temperature is not None:
         providers[active]["temperature"] = temperature
-        state.provider.temperature = temperature
     save_providers(providers, active)
-    state.provider.model = model_name
     # Re-query context window for Ollama — it's model-specific
     if active == "ollama":
         from chaosz.ollama_utils import get_model_context_window
         ctx = get_model_context_window(model_name)
         providers["ollama"]["context_window"] = ctx
         save_providers(providers, active)
-        state.provider.max_ctx = ctx
-    # Update reasoning state if switching to/from reasoner
-    if "reasoner" in model_name.lower():
-        state.reasoning.enabled = True
-    elif state.provider.active == "deepseek" and "chat" in model_name.lower():
-        state.reasoning.enabled = False
+    sync_runtime_provider_state(active, providers)
 
     if temperature is not None:
         _, temp_label = TEMPERATURE_OPTIONS[state.provider.temp_menu_index]

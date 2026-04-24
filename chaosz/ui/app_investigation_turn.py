@@ -10,6 +10,7 @@ from rich.text import Text
 
 from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import build_api_params, get_client, get_native_ollama_client
+from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session
 from chaosz.state import state
 from chaosz.stream_adapters import ToolCall, stream as _stream
@@ -271,8 +272,8 @@ def run_investigation_turn(app, user_input: str) -> None:
                         {"role": "system", "content": selection_system},
                         {"role": "user", "content": selection_user},
                     ],
+                    stream=False,
                 )
-                selection_params["stream"] = False
                 selection_params["timeout"] = 45
                 selection_resp = client.chat.completions.create(**selection_params)
                 _record_usage(selection_resp)
@@ -323,6 +324,7 @@ def run_investigation_turn(app, user_input: str) -> None:
                 tool_calls_received: list[ToolCall] = []
                 full_response = ""
                 reasoning_started = False
+                reasoning_content = ""
                 
                 tool_delta_buffer = ""
                 tool_line_buffer = ""
@@ -336,6 +338,8 @@ def run_investigation_turn(app, user_input: str) -> None:
                         app.call_from_thread(app._append_reasoning_line, chunk.reasoning_line)
                     if chunk.reasoning_block:
                         app.call_from_thread(app._write_reasoning_block, chunk.reasoning_block)
+                    if chunk.reasoning_content:
+                        reasoning_content = chunk.reasoning_content
                     if chunk.text:
                         full_response += chunk.text
                     if chunk.tool_delta:
@@ -405,6 +409,8 @@ def run_investigation_turn(app, user_input: str) -> None:
                     "content": full_response or None,
                     "tool_calls": tool_calls_for_msg,
                 })
+                if reasoning_content and state.reasoning.enabled and provider_requires_reasoning_echo(state.provider.active):
+                    analysis_msgs[-1]["reasoning_content"] = reasoning_content
 
                 tool_result_msgs = []
                 for tc in tool_calls_parsed:
