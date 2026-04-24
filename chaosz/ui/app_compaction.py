@@ -1,7 +1,7 @@
 from rich.text import Text
 
 from chaosz.config import build_system_prompt
-from chaosz.providers import get_client, get_native_ollama_client
+from chaosz.providers import build_api_params, get_client, get_native_ollama_client
 from chaosz.state import state
 
 
@@ -34,8 +34,22 @@ def generate_summary(app, messages):
 
     # Build summary prompt
     summary_prompt = (
-        "Please summarize the conversation concisely, focusing on key decisions, "
-        "technical details, and user preferences. Keep the summary under 200 words."
+        "You are producing a CONTEXT HANDOFF for an AI coding assistant.\n"
+        "The model reading this will have no other conversation history.\n"
+        "Be specific, technical, and complete. Use the following structure:\n\n"
+        "## Current goal\n"
+        "One sentence: what the user is trying to accomplish right now.\n\n"
+        "## Files and state\n"
+        "For each file touched this session: path, what changed, current state.\n"
+        "If no files were touched, say so.\n\n"
+        "## Decisions and constraints\n"
+        "Key technical choices made, approaches ruled out, constraints the user stated.\n\n"
+        "## Code details\n"
+        "Relevant snippets, function names, variable names, patterns — anything the\n"
+        "model needs to continue without re-asking. Omit boilerplate.\n\n"
+        "## Open threads\n"
+        "Anything mid-flight, unresolved, or explicitly left for later.\n\n"
+        "Aim for 400-600 words. Do not pad. Do not omit technical specifics to stay short."
     )
     summary_messages = [
         {"role": "system", "content": build_system_prompt()},
@@ -54,12 +68,14 @@ def generate_summary(app, messages):
             return response.get("message", {}).get("content", "").strip()
         else:
             client = get_client()
-            response = client.chat.completions.create(
-                model=state.provider.model,
-                messages=summary_messages,
+            params = build_api_params(
+                state.provider.active,
+                state.provider.model,
+                summary_messages,
                 stream=False,
-                timeout=45,
             )
+            params["timeout"] = 45
+            response = client.chat.completions.create(**params)
             return response.choices[0].message.content.strip()
     except Exception as e:
         # Fallback: concatenate first 100 chars of each filtered message
@@ -89,7 +105,7 @@ def compact_conversation(app, auto=False):
         # Replace state.session.messages with compact representation under the lock
         with state.session.lock:
             state.session.messages = [
-                {"role": "user", "content": f"[COMPACT] Previous conversation summary: {summary}"},
+                {"role": "user", "content": f"[CONTEXT HANDOFF]\n\n{summary}"},
                 {"role": "assistant", "content": "Understood. Continuing from the summary."},
             ]
 

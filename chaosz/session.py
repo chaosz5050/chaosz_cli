@@ -139,7 +139,7 @@ def run_reflection_pass(app) -> bool:
     Must be called from a background thread.
     """
     from chaosz.config import VALID_CATEGORIES
-    from chaosz.providers import get_client, get_native_ollama_client
+    from chaosz.providers import build_api_params, get_client, get_native_ollama_client
 
     # Read live session
     if not os.path.exists(LIVE_SESSION):
@@ -196,8 +196,14 @@ def run_reflection_pass(app) -> bool:
         "top_of_mind: current session focus only. Completely replaced\n"
         "  every pass. Empty if nothing significant happened.\n"
         "  Max 3 entries.\n\n"
-        "summary: A 2-3 sentence rolling summary of the RECENT CONVERSATION.\n"
-        "  Be concise. Describe the current task and progress.\n\n"
+        "summary: A structured handoff document for the next session. The model\n"
+        "  reading this will have no other conversation history. Use this format:\n\n"
+        "  CURRENT TASK: one sentence — what the user is working on right now.\n"
+        "  FILES: list each file touched this session with a brief note on its state.\n"
+        "  DECISIONS: key technical choices made or constraints the user stated.\n"
+        "  NEXT STEP: where things were left off or what comes next.\n\n"
+        "  Aim for 100-200 words. Be specific — include file paths, function names,\n"
+        "  variable names. Do not pad. Do not omit specifics to stay short.\n\n"
         "PRUNING RULES — remove any entry that:\n"
         "- Contains \"recently\", \"today\", \"discussed\", \"asked about\"\n"
         "- Describes a one-off event or action\n"
@@ -226,16 +232,18 @@ def run_reflection_pass(app) -> bool:
             raw = response.get("message", {}).get("content", "").strip()
         else:
             client = get_client()
-            response = client.chat.completions.create(
-                model=state.provider.model,
-                messages=[
+            params = build_api_params(
+                state.provider.active,
+                state.provider.model,
+                [
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": prompt},
                 ],
                 stream=False,
-                timeout=20,
-                response_format={"type": "json_object"},
             )
+            params["timeout"] = 30
+            params["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**params)
             raw = response.choices[0].message.content.strip()
 
         updated_data = json.loads(raw)
@@ -287,6 +295,11 @@ def run_reflection_pass(app) -> bool:
                     f.write(f"REFLECTION FAILED: {e}\n")
             except OSError:
                 pass
+        from rich.text import Text
+        app.call_from_thread(
+            app._write, "",
+            Text("⚠ Reflection pass failed — context not updated.", style="dim yellow"),
+        )
         return False
 
 
@@ -321,7 +334,15 @@ def restore_session() -> None:
             restored.append({"role": "user", "content": f"[REFLECTION SUMMARY] {content}"})
             restored.append({"role": "assistant", "content": "Understood. Continuing from where we left off."})
         elif role in ("user", "assistant"):
-            restored.append({"role": role, "content": content})
+            if role == "assistant" and m.get("tool_calls"):
+                # Strip tool_calls — the corresponding tool results won't be in the
+                # restored session, so including them produces dangling tool_call_ids
+                # that cause API 400 errors on the next call.
+                if content:
+                    restored.append({"role": "assistant", "content": content})
+                # tool-only assistant turns (no content) are skipped entirely
+            else:
+                restored.append({"role": role, "content": content})
 
     state.session.messages = restored
 
@@ -370,12 +391,14 @@ def generate_and_save_session(app) -> bool:
             raw = response.get("message", {}).get("content", "").strip()
         else:
             client = get_client()
-            response = client.chat.completions.create(
-                model=state.provider.model,
-                messages=api_messages,
+            params = build_api_params(
+                state.provider.active,
+                state.provider.model,
+                api_messages,
                 stream=False,
-                timeout=15,
             )
+            params["timeout"] = 15
+            response = client.chat.completions.create(**params)
             raw = response.choices[0].message.content.strip()
 
         raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
