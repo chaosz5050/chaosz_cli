@@ -53,9 +53,11 @@ if ! command -v pipx >/dev/null 2>&1; then
             sudo dnf install -y pipx
         elif command -v brew >/dev/null 2>&1; then
             brew install pipx
+        elif command -v pkg >/dev/null 2>&1; then
+            pkg install -y pipx
         else
-            echo "Could not detect package manager. Please install pipx manually."
-            exit 1
+            echo "[INFO] No package manager detected. Falling back to pip..."
+            python3 -m pip install --user pipx
         fi
     else
         echo "pipx is required to install Chaosz globally. Exiting."

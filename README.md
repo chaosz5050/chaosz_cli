@@ -1,6 +1,6 @@
 # Chaosz CLI
 
-[![Version](https://img.shields.io/badge/version-0.8.1-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
+[![Version](https://img.shields.io/badge/version-0.9.0-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
 [![License](https://img.shields.io/badge/license-Source%20Available-orange?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square&logo=linux&logoColor=white)](https://github.com/chaosz5050/chaosz_cli)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
@@ -80,6 +80,7 @@ All configuration is stored in `~/.config/chaosz/` — this directory is created
 | `skills/` | Skill overlay files; add `.md` files here to create custom skills |
 | `context/` | Rolling session snapshots (last 5 sessions) |
 | `archive/` | Older sessions archived by date |
+| `backups/` | Pre-edit file backups, one timestamped folder per session; auto-pruned after 7 days |
 | `logs/` | Session shell logs and AI turn logs |
 
 The **working directory** is set automatically to wherever you launch the app — no configuration needed. To give the AI project-specific context, create a `chaosz.md` file in your project root.
@@ -217,6 +218,8 @@ Kimi is excluded from temperature control — it rejects sampling parameters at 
 ## File Operations
 
 All file tools run inside the confirmed working directory. Destructive operations (write, edit, delete, rename) require explicit `y/n` confirmation. Shell commands require `y` (once) or `s` (session) approval. The AI can also execute `sudo` commands — you'll be prompted for your password, which is cleared from memory immediately after use.
+
+**Automatic backups:** Before any file is overwritten or deleted, Chaosz copies the original to `~/.config/chaosz/backups/<session-timestamp>/`. Each session gets its own folder named by date and time (e.g. `2026-04-24_143022`). Backup folders older than 7 days are pruned automatically on startup. This is a safety net, not a full version control system — for that, use git.
 
 ## Web Search
 

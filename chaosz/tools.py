@@ -3,6 +3,7 @@ import difflib
 
 from chaosz.state import state
 from chaosz.shell import tool_shell_exec
+from chaosz.session import backup_file
 
 MAX_FILE_LINES = 2000
 
@@ -280,6 +281,7 @@ def tool_file_write(args: dict) -> tuple[str, str]:
             f"'{path}' is a directory, not a file. "
             f"Provide a full file path including the filename, e.g. '{path}/plan.md'."
         )
+    backup_file(path)
     content = args.get("content", "")
     try:
         parent = os.path.dirname(path)
@@ -300,6 +302,7 @@ def tool_file_edit(args: dict) -> tuple[str, str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             original = f.read()
+        backup_file(path)
         new_content, apply_err = apply_surgical_edit(original, edits)
         if apply_err:
             return "error", f"Edit failed: {apply_err}"
@@ -315,6 +318,7 @@ def tool_file_delete(args: dict) -> tuple[str, str]:
     if err:
         return "error", err
     try:
+        backup_file(path)
         os.remove(path)
         return "ok", f"File '{args['path']}' deleted."
     except FileNotFoundError:

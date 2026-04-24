@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from datetime import datetime, timezone, timedelta
 
 from chaosz.config import CHAOSZ_DIR
@@ -8,14 +9,53 @@ from chaosz.state import state
 
 CONTEXT_DIR  = os.path.join(CHAOSZ_DIR, "context")
 ARCHIVE_DIR  = os.path.join(CHAOSZ_DIR, "archive")
+BACKUP_DIR   = os.path.join(CHAOSZ_DIR, "backups")
 _MEMORY_FILE = os.path.join(CHAOSZ_DIR, "memory.json")
 _MAX_SESSIONS = 5
 _ARCHIVE_MAX_DAYS = 5
+_BACKUP_MAX_DAYS  = 7
+
+_session_backup_dir: str = ""
 
 
 def _ensure_dirs() -> None:
     os.makedirs(CONTEXT_DIR, exist_ok=True)
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+
+def _init_session_backup() -> None:
+    global _session_backup_dir
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+    _session_backup_dir = os.path.join(BACKUP_DIR, ts)
+    try:
+        os.makedirs(_session_backup_dir, exist_ok=True)
+    except OSError:
+        _session_backup_dir = ""
+
+
+def _prune_old_backups() -> None:
+    if not os.path.isdir(BACKUP_DIR):
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_BACKUP_MAX_DAYS)
+    for entry in os.listdir(BACKUP_DIR):
+        entry_path = os.path.join(BACKUP_DIR, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        mtime = datetime.fromtimestamp(os.path.getmtime(entry_path), tz=timezone.utc)
+        if mtime < cutoff:
+            shutil.rmtree(entry_path, ignore_errors=True)
+
+
+def backup_file(path: str) -> None:
+    """Copy path into the current session backup folder before overwrite/delete. Silent on error."""
+    if not _session_backup_dir or not os.path.isfile(path):
+        return
+    flat_name = path.lstrip(os.sep).replace(os.sep, "__")
+    try:
+        shutil.copy2(path, os.path.join(_session_backup_dir, flat_name))
+    except OSError:
+        pass
 
 
 def _log_error(msg: str) -> None:
@@ -121,6 +161,8 @@ def startup_cleanup() -> None:
         except OSError:
             pass
     _ensure_dirs()
+    _prune_old_backups()
+    _init_session_backup()
     if os.path.exists(_session_path(1)):
         _rotate_sessions()
     init_live_session()
