@@ -31,7 +31,9 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Themes** — built-in color themes (default, amber, mono, green); switch live with `/theme`; drop a custom `.theme` file in `~/.config/chaosz/themes/` to add your own
 - **Project context** — drop a `chaosz.md` file in your project root and its contents are automatically injected into every system prompt as project-specific context
 
-<img width="1247" height="956" alt="image" src="https://github.com/user-attachments/assets/efe91a1b-4f5d-464a-a469-fc144c9b214f" />
+
+<img width="1247" height="956" alt="image" src="https://github.com/user-attachments/assets/d09d2104-196a-430a-874a-1448ba2f3717" />
+
 
 
 ## Limitations & Best Practices
