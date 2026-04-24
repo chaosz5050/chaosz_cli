@@ -1,0 +1,20 @@
+.aider*
+
+# Chaosz user data (moved to ~/.config/chaosz)
+config.json
+memory.json
+history.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+dist/
+*.egg-info/
+.venv/
+
+# Runtime / debug
+logs/
+context/
+debug_write.py
+.codex

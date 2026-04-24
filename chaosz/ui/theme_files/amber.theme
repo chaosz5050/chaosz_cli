@@ -1,0 +1,21 @@
+{
+  "bg_main": "#0d0800",
+  "bg_input": "#1a1000",
+  "bg_statusbar": "#150c00",
+  "bg_infobar": "#1a1200",
+  "header_text": "#ffb000",
+  "input_label": "#cc8800",
+  "scrollbar": "#664400",
+  "border": "#2a1a00",
+  "text": "#ffe090",
+  "text_dim": "#997730",
+  "text_info": "#ccaa60",
+  "text_version": "#886622",
+  "user_msg_bg": "#1a1000",
+  "plasma_bg": "#0d0800",
+  "plasma_stops": ["#3d1f00", "#7a3d00", "#cc7700", "#ffaa00", "#ffd080"],
+  "cmd": "#dd8800",
+  "arg": "#ffcc00",
+  "accent": "#ffb000",
+  "menu_highlight": "#553300"
+}

@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "chaosz-cli"
+version = "0.8.1"
+description = "A Python CLI AI API wrapper"
+authors = ["Chaosz Software"]
+readme = "README.md"
+packages = [{include = "chaosz"}]
+include = [
+    {path = "chaosz/ui/theme_files/*.theme"}
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+openai = ">=1.0.0"
+rich = ">=13.0.0"
+textual = ">=0.60.0"
+ddgs = "^9.12.1"
+ollama = "^0.6.1"
+google-genai = "^1.72.0"
+mcp = ">=1.9.0,<2.0.0"
+
+[tool.poetry.scripts]
+chaosz = "chaosz.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.3,<10.0.0)"
+]
