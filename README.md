@@ -1,6 +1,12 @@
 # Chaosz CLI
 
-A terminal AI chat application built with Python and [Textual](https://textual.textualize.io/). Connects to cloud AI providers (DeepSeek, Kimi, Gemini) and local models via Ollama.
+[![Version](https://img.shields.io/badge/version-0.8.1-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
+[![License](https://img.shields.io/badge/license-Source%20Available-orange?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square&logo=linux&logoColor=white)](https://github.com/chaosz5050/chaosz_cli)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![TUI](https://img.shields.io/badge/TUI-Textual-6E40C9?style=flat-square)](https://textual.textualize.io)
+
+A terminal AI chat application for Linux, built with Python and [Textual](https://textual.textualize.io/). Connects to cloud AI providers (DeepSeek, Kimi, Gemini, Mistral) and local models via Ollama.
 
 > **Plug in a brain. Own the chaos.**
 
@@ -9,7 +15,7 @@ A terminal AI chat application built with Python and [Textual](https://textual.t
 - **TUI interface** — full-screen terminal UI with scrollable chat, status bar, and input history (↑/↓)
 - **Streaming responses** — token-by-token output with markdown and syntax-highlighted code blocks
 - **Live tool streaming** — watch code being written in real-time with matrix-style line-by-line scrolling
-- **Dynamic model selection** — fetch and switch between model versions (e.g., Gemini Pro vs Flash, local Ollama tags) via `/model select`; after choosing a model, a temperature sub-menu appears to the right with 5 presets (Coding/Tools → Wild); selection is saved per-provider
+- **Dynamic model selection** — fetch and switch between model versions (e.g., Gemini Pro vs Flash, local Ollama tags) via `/model list`; after choosing a model, a temperature sub-menu appears to the right with 5 presets (Coding/Tools → Wild); selection is saved per-provider
 - **Multi-provider** — switch between DeepSeek, Kimi, Gemini, Mistral, and Ollama at runtime; add/remove providers via an interactive menu
 - **Agentic file operations** — AI can read, write, edit, rename, and delete files; all destructive ops require explicit permission
 - **Shell execution** — AI can run terminal commands; each command requires your approval (once or session-wide)
@@ -19,16 +25,17 @@ A terminal AI chat application built with Python and [Textual](https://textual.t
 - **Reflection system** — AI automatically consolidates and prunes its memory after every 10 messages in the background, keeping context lean and retaining task flow via rolling summaries
 - **Prompt caching** — automatic cost reduction for DeepSeek and Kimi via session-aware caching
 - **Skill system** — activate on-demand task-mode overlays (coder, code-review, mcp-builder, or your own); stored as plain `.md` files in `~/.config/chaosz/skills/` so you can edit them at any time
-- **Reasoning mode** — toggle extended model reasoning output with `/reason on` (DeepSeek only; switches to deepseek-reasoner)
+- **Reasoning mode** — toggle extended model reasoning output with `/reason on` (DeepSeek only; switches to deepseek-v4-pro)
 - **Personality** — set a custom AI personality that persists across sessions
 - **Context compaction** — `/compact` summarizes conversation history to free up context window space; auto-triggers at 90%
+- **Themes** — built-in color themes (default, amber, mono, green); switch live with `/theme`; drop a custom `.theme` file in `~/.config/chaosz/themes/` to add your own
 - **Project context** — drop a `chaosz.md` file in your project root and its contents are automatically injected into every system prompt as project-specific context
 
 ## Limitations & Best Practices
 
 While Chaosz CLI supports both local and cloud models, **your experience will vary significantly based on the intelligence and training of the active model.**
 
-> ⚠️ **Local Ollama models are not recommended for agentic use.** They will hallucinate tool calls, fabricate file operations, and describe actions they never actually execute. This is a fundamental model capability issue — not a bug in Chaosz CLI. If you want the full capacity of Chaosz CLI (reliable tool use, plan execution, multi-step agentic tasks), hook it up with a proper API model: **Claude, Kimi, DeepSeek, or Gemini**.
+> ⚠️ **Local Ollama models are not recommended for agentic use.** They will hallucinate tool calls, fabricate file operations, and describe actions they never actually execute. This is a fundamental model capability issue — not a bug in Chaosz CLI. If you want the full capacity of Chaosz CLI (reliable tool use, plan execution, multi-step agentic tasks), hook it up with a proper API model: **Kimi, DeepSeek, or Gemini**.
 
 **Cloud APIs (Gemini, DeepSeek, Kimi) are recommended for real work.** These models have been explicitly fine-tuned for high-reliability function calling. They natively understand the file operation tools, respect the sandbox boundaries, and can orchestrate complex, multi-file refactors autonomously with minimal prompting.
 
@@ -45,7 +52,7 @@ The short version: **Ollama is fine for chatting and quick questions. For anythi
 
 ## Installation
 
-Requires Python 3.11+ and [Poetry](https://python-poetry.org/).
+Requires **Linux**, Python 3.11+, and [Poetry](https://python-poetry.org/).
 
 ```bash
 ./run.sh
@@ -69,6 +76,8 @@ All configuration is stored in `~/.config/chaosz/` — this directory is created
 | `config.json` | API keys, active provider, active model, active skill, reason flag |
 | `memory.json` | Persistent AI memories across all sessions |
 | `history.json` | Input history (↑/↓ navigation) |
+| `themes/` | Theme files; add `.theme` JSON files here to create custom themes |
+| `skills/` | Skill overlay files; add `.md` files here to create custom skills |
 | `context/` | Rolling session snapshots (last 5 sessions) |
 | `archive/` | Older sessions archived by date |
 | `logs/` | Session shell logs and AI turn logs |
@@ -84,7 +93,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/model add` | Interactive menu to add a new provider (`deepseek`, `kimi`, `gemini`, `ollama`) |
 | `/model del <provider>` | Remove a provider |
 | `/apikey` | Update API key for the current provider |
-| `/reason on\|off` | Toggle extended reasoning output (DeepSeek only — switches to deepseek-reasoner) |
+| `/reason on\|off` | Toggle extended reasoning output (DeepSeek only — switches to deepseek-v4-pro) |
 | `/personality set` | Enter a custom AI personality (multiline) |
 | `/personality view` | Show current personality |
 | `/personality clear` | Remove personality |
@@ -94,6 +103,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/memory clear` | Wipe all memories |
 | `/compact` | Summarize conversation history and reset token counter |
 | `/header` | Toggle the ASCII logo header on/off (preference is saved) |
+| `/theme` | Interactive theme selection menu |
 | `/skill list` | Interactive skill selection menu (↑/↓ navigate, Enter select, Esc cancel) |
 | `/skill add <name>` | Create a new skill (multiline input; saved as `~/.config/chaosz/skills/<name>.md`) |
 | `/skill edit <name>` | Show file path for editing the skill outside the app |
@@ -119,7 +129,7 @@ These two features look similar from the outside (both inject instructions into 
 | **Scope** | Every response, regardless of task | Task-specific; only active when selected |
 | **Cardinality** | One (global, always on) | Many exist, one active at a time |
 | **Storage** | `~/.config/chaosz/config.json` | `~/.config/chaosz/skills/<name>.md` |
-| **Visible in footer** | `│ ✦ persona` (dim) | `│ skill-name` (magenta) |
+| **Visible in footer** | `│ ✦ persona` (dim) | `│ skill-name` (highlighted) |
 
 **Rule of thumb:** If you're describing a persona, a tone, or a communication preference — that's Personality. If you're describing a workflow, a methodology, or domain-specific rules about how to approach a category of task — that's a Skill.
 
@@ -180,7 +190,7 @@ Its contents are automatically injected into the AI's system prompt every turn. 
 
 ## Temperature
 
-Temperature controls how deterministic or creative the model's output is. It is configured per-provider via `/model select` — after you choose a model version, a temperature sub-menu appears to the right.
+Temperature controls how deterministic or creative the model's output is. It is configured per-provider via `/model list` — after you choose a model version, a temperature sub-menu appears to the right.
 
 | Preset | Value | Best for |
 |---|---|---|
@@ -198,7 +208,7 @@ Kimi is excluded from temperature control — it rejects sampling parameters at 
 
 | Provider | Default Model | Context | Notes |
 |---|---|---|---|
-| `deepseek` | deepseek-chat | 128K | Supports `/reason on` (switches to deepseek-reasoner) |
+| `deepseek` | deepseek-v4-flash | 128K | Supports `/reason on` (switches to deepseek-v4-pro) |
 | `kimi` | kimi-k2.5 | 256K | Robust long-context and tool use; rejects temperature/top_p |
 | `gemini` | gemini-2.5-flash | 1M | Massively large context; native tool support via google-genai SDK |
 | `mistral` | mistral-large-latest | 32K | OpenAI-compatible API with full tool support and temperature control |
@@ -208,23 +218,10 @@ Kimi is excluded from temperature control — it rejects sampling parameters at 
 
 All file tools run inside the confirmed working directory. Destructive operations (write, edit, delete, rename) require explicit `y/n` confirmation. Shell commands require `y` (once) or `s` (session) approval. The AI can also execute `sudo` commands — you'll be prompted for your password, which is cleared from memory immediately after use.
 
-## Development
-
-### Running Tests
-
-```bash
-poetry run pytest
-```
-
-The test suite covers the core logic that is most likely to break silently — streaming helpers and memory tag processing:
-
-| File | What it tests |
-|---|---|
-| `tests/test_stream_adapters.py` | `_process_think_tags`, `_split_reasoning_lines`, `_flush_think_buf` — the pure functions that parse `<think>` blocks and split reasoning output across streaming chunks |
-| `tests/test_config.py` | `process_memory_tags` (tag stripping, category validation, persistence) and `build_system_prompt` (working dir, personality, and memory injection) |
-
-API adapter tests (`_iter_ollama`, `_iter_openai_compat`, `_iter_gemini`) are intentionally excluded — they require live API calls and are better validated by running the app.
-
 ## Web Search
 
 The AI uses DuckDuckGo search when it needs current information it can't answer from training data alone — recent events, up-to-date documentation, package versions, etc. No API key required. Results are fed back into the conversation and the AI summarizes them naturally in its response.
+
+## License
+
+Chaosz CLI is source-available software. You are free to use it for personal, non-commercial purposes. You may not modify it, redistribute it, or use it commercially. See [LICENSE](LICENSE) for the full terms.
