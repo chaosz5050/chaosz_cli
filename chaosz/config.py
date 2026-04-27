@@ -13,12 +13,17 @@ LOG_FILE     = os.path.join(CHAOSZ_DIR, "llm.log")
 VALID_CATEGORIES = {"about_user", "preferences", "projects", "top_of_mind", "workspace_context"}
 
 
-def _ensure_chaosz_dir() -> None:
+def ensure_chaosz_dir() -> None:
     os.makedirs(CHAOSZ_DIR, exist_ok=True)
     os.chmod(CHAOSZ_DIR, 0o700)
 
 
-_ensure_chaosz_dir()
+def _ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+        os.chmod(parent, 0o700)
+
 
 DEFAULT_SYSTEM_PROMPT = """You are an intelligent, autonomous assistant operating globally on the user's machine. You can help with coding, writing, analysis, brainstorming, and anything else the user needs. You prefer clean, well-structured code.
 
@@ -71,6 +76,7 @@ def _read_config_file() -> dict:
 
 
 def _write_config_file(data: dict) -> None:
+    _ensure_parent_dir(CONFIG_FILE)
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)
     os.chmod(CONFIG_FILE, 0o600)
@@ -189,6 +195,7 @@ def load_input_history() -> list[str]:
         except Exception: return []
 
 def save_input_history(history: list[str]) -> None:
+    _ensure_parent_dir(HISTORY_FILE)
     with open(HISTORY_FILE, "w") as f: json.dump(history[-500:], f)
 
 
@@ -208,6 +215,7 @@ def load_memory():
 
 
 def save_memory(memory: dict) -> None:
+    _ensure_parent_dir(MEMORY_FILE)
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=2)
 

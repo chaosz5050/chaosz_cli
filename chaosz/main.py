@@ -2,7 +2,16 @@ import os
 from datetime import datetime
 
 from chaosz.state import state
-from chaosz.config import load_config, load_memory, load_personality, load_reason_enabled, load_input_history, load_active_skill, load_theme
+from chaosz.config import (
+    ensure_chaosz_dir,
+    load_active_skill,
+    load_config,
+    load_input_history,
+    load_memory,
+    load_personality,
+    load_reason_enabled,
+    load_theme,
+)
 from chaosz.providers import load_providers, sync_runtime_provider_state
 from chaosz.config import CHAOSZ_DIR
 from chaosz.shell import _setup_session_logs
@@ -40,6 +49,7 @@ def _reset_ai_turn_log() -> None:
 
 
 def main():
+    ensure_chaosz_dir()
     state.session.log_path = _setup_session_logs()
     _reset_tool_result_log()
     _reset_ai_turn_log()

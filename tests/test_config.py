@@ -6,12 +6,82 @@ Filesystem writes are redirected to tmp_path so real config files are never touc
 """
 
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 
 from chaosz import config as cfg
 from chaosz.state import state
+
+
+# ---------------------------------------------------------------------------
+# Import and write-time filesystem behavior
+# ---------------------------------------------------------------------------
+
+def test_import_config_does_not_create_chaosz_dir(tmp_path):
+    env = {**os.environ, "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "import chaosz.config; "
+                "print(os.path.exists(os.path.join(os.environ['HOME'], '.config', 'chaosz')))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.stdout.strip() == "False"
+
+
+def test_write_config_file_creates_config_dir(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    config_file = chaosz_dir / "config.json"
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "CONFIG_FILE", str(config_file)),
+    ):
+        cfg._write_config_file({"theme": "default"})
+
+    assert config_file.exists()
+    assert json.loads(config_file.read_text()) == {"theme": "default"}
+
+
+def test_save_input_history_creates_config_dir(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    history_file = chaosz_dir / "history.json"
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "HISTORY_FILE", str(history_file)),
+    ):
+        cfg.save_input_history(["hello"])
+
+    assert json.loads(history_file.read_text()) == ["hello"]
+
+
+def test_save_memory_creates_config_dir(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    memory_file = chaosz_dir / "memory.json"
+    memory = {cat: [] for cat in cfg.VALID_CATEGORIES}
+    memory["preferences"] = ["concise"]
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "MEMORY_FILE", str(memory_file)),
+    ):
+        cfg.save_memory(memory)
+
+    assert json.loads(memory_file.read_text())["preferences"] == ["concise"]
 
 
 # ---------------------------------------------------------------------------
