@@ -53,8 +53,9 @@ class PermissionsState:
         self.granted: bool = False
         self.awaiting: bool = False
         self.file_session_allowed: set[str] = set()
+        self.file_read_session_allowed: set[str] = set()
         self.file_session_granted: bool = False
-        self.shell_session_allowed: set[str] = set()
+        self.shell_session_allowed: set = set()
         self.shell_session_granted: bool = False
         self.awaiting_shell: bool = False
         self.pending_shell_command: tuple | None = None

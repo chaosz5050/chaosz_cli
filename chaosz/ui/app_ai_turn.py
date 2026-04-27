@@ -9,8 +9,7 @@ from rich.text import Text
 
 from chaosz.config import build_system_prompt, process_memory_tags, CHAOSZ_DIR
 from chaosz.shell import (
-    DANGEROUS_OPS,
-    READ_ONLY_CMDS,
+    build_shell_session_grants,
     is_always_prompt_command,
     is_command_allowed_by_session,
     tool_shell_exec,
@@ -18,7 +17,16 @@ from chaosz.shell import (
 from chaosz.state import _permission_event, state
 from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.stream_adapters import ToolCall, stream as _stream
-from chaosz.tools import FILE_TOOLS, TOOL_EXECUTORS, _build_diff, _build_op_summary, get_all_tools
+from chaosz.tools import (
+    FILE_TOOLS,
+    TOOL_EXECUTORS,
+    _build_diff,
+    _build_op_summary,
+    build_file_read_session_grant,
+    build_file_read_summary,
+    get_all_tools,
+    is_file_read_allowed_by_session,
+)
 from chaosz.ui.stream_utils import unescape_tool_delta
 
 TOOL_RESULT_LOG_PATH = os.path.join(CHAOSZ_DIR, "logs", "tool_result.log")
@@ -548,10 +556,32 @@ def run_ai_turn(app) -> None:
                                 {"op": fname, "path": path_display, "status": log_status, "detail": "duplicate-skipped"}
                             )
                         else:
-                            log_status, result_content = executor(tc_args)
-                            if read_key:
-                                seen_file_reads[read_key] = _fingerprint_file(read_key[0])
-                            app.call_from_thread(app._write, "", Text(f"  [read] {path_display}", style="dim cyan"))
+                            if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed):
+                                log_status, result_content = executor(tc_args)
+                                if read_key:
+                                    seen_file_reads[read_key] = _fingerprint_file(read_key[0])
+                                app.call_from_thread(app._write, "", Text(f"  [read] {path_display} (session)", style="dim cyan"))
+                            else:
+                                _permission_event.clear()
+                                state.permissions.granted = False
+                                app.call_from_thread(app._show_tool_permission_prompt, fname, build_file_read_summary(tc_args), None)
+                                _permission_event.wait()
+
+                                if state.permissions.granted:
+                                    if state.permissions.file_session_granted:
+                                        grant = build_file_read_session_grant(tc_args)
+                                        if grant:
+                                            state.permissions.file_read_session_allowed.add(grant)
+                                        state.permissions.file_session_granted = False
+                                    log_status, result_content = executor(tc_args)
+                                    if read_key:
+                                        seen_file_reads[read_key] = _fingerprint_file(read_key[0])
+                                else:
+                                    log_status = "denied"
+                                    result_content = f"File read '{path_display}' denied by user."
+
+                                color = "dim cyan" if log_status == "ok" else ("yellow" if log_status == "denied" else "red")
+                                app.call_from_thread(app._write, "", Text(f"  [read] {path_display} → {result_content[:80]}", style=color))
                             state.workspace.file_op_log.append(
                                 {"op": fname, "path": path_display, "status": log_status, "detail": ""}
                             )
@@ -577,16 +607,9 @@ def run_ai_turn(app) -> None:
                             if state.permissions.granted:
                                 # If session granted, add to session memory
                                 if state.permissions.shell_session_granted and not always_prompt:
-                                    state.permissions.shell_session_allowed.add(command)
-
-                                    # Extract base command and add it if it's safe read-only
-                                    words = command.strip().split()
-                                    if words:
-                                        base_cmd = os.path.basename(words[0])
-                                        if base_cmd in READ_ONLY_CMDS and not any(
-                                            op in command for op in DANGEROUS_OPS
-                                        ):
-                                            state.permissions.shell_session_allowed.add(base_cmd)
+                                    state.permissions.shell_session_allowed.update(
+                                        build_shell_session_grants(command)
+                                    )
 
                                 # Check if sudo command
                                 if command.strip().startswith("sudo "):

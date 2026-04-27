@@ -1,6 +1,8 @@
 import os
 import re
+import shlex
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 
 from chaosz.config import CHAOSZ_DIR
@@ -13,30 +15,122 @@ ALWAYS_PROMPT_COMMANDS = {
     "mkswap", "swapon", "shred", "wipefs"
 }
 
-READ_ONLY_CMDS = {"cat", "ls", "grep", "find", "tree", "head", "tail", "rg", "ag", "ack", "less", "more"}
 DANGEROUS_OPS = {"|", ">", "<", "&", ";", "$", "`"}
+PATTERN_REUSE_CMDS = {"cat", "ls", "tree", "head", "tail"}
+
+
+@dataclass(frozen=True)
+class ShellReadGrant:
+    command: str
+    options: tuple[str, ...]
+    directory: str
+    glob_shape: str
+
+
+def _has_shell_control(command: str) -> bool:
+    return any(op in command for op in DANGEROUS_OPS)
+
+
+def _parse_shell_words(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def _simple_glob_shape(pattern: str) -> str | None:
+    if pattern.count("*") != 1:
+        return None
+    if pattern == "*":
+        return None
+    if any(ch in pattern for ch in "?[]{}"):
+        return None
+    if pattern.endswith("*"):
+        return "trailing-star"
+    if pattern.startswith("*"):
+        return "leading-star"
+    return "middle-star"
+
+
+def _resolve_workspace_target(target: str) -> tuple[str, str] | None:
+    """Return (directory, basename_pattern) if target stays inside the workspace."""
+    if not state.workspace.working_dir:
+        return None
+
+    expanded = os.path.expanduser(target)
+    base = os.path.realpath(state.workspace.working_dir)
+    joined = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
+    raw_dir, basename = os.path.split(joined)
+    if not basename:
+        return None
+
+    directory = os.path.realpath(raw_dir or base)
+    if directory != base and not directory.startswith(base + os.sep):
+        return None
+    return directory, basename
+
+
+def _build_read_grant(command: str) -> ShellReadGrant | None:
+    if _has_shell_control(command):
+        return None
+
+    words = _parse_shell_words(command)
+    if not words:
+        return None
+
+    base_cmd = os.path.basename(words[0])
+    if base_cmd not in PATTERN_REUSE_CMDS:
+        return None
+
+    options: list[str] = []
+    targets: list[str] = []
+    for word in words[1:]:
+        if word.startswith("-"):
+            options.append(word)
+        else:
+            targets.append(word)
+
+    if len(targets) != 1:
+        return None
+
+    resolved = _resolve_workspace_target(targets[0])
+    if not resolved:
+        return None
+    directory, basename = resolved
+    glob_shape = _simple_glob_shape(basename)
+    if not glob_shape:
+        return None
+
+    return ShellReadGrant(
+        command=base_cmd,
+        options=tuple(options),
+        directory=directory,
+        glob_shape=glob_shape,
+    )
+
+
+def build_shell_session_grants(command: str) -> set:
+    """Build session approvals for a user-approved shell command."""
+    if _has_shell_control(command):
+        return set()
+
+    grants: set = {command}
+    read_grant = _build_read_grant(command)
+    if read_grant:
+        grants.add(read_grant)
+    return grants
 
 
 def is_command_allowed_by_session(command: str, allowed_set: set) -> bool:
-    """Check if command is in allowed_set, including whitelist logic for base commands."""
+    """Check if command is allowed by exact or pattern-scoped session grants."""
+    if _has_shell_control(command):
+        return False
+
     if command in allowed_set:
         return True
 
-    words = command.strip().split()
-    if not words:
-        return False
-
-    base_cmd = os.path.basename(words[0])
-    
-    # Check for dangerous ops
-    if any(op in command for op in DANGEROUS_OPS):
-        return False
-        
-    if base_cmd in READ_ONLY_CMDS:
-        if base_cmd in allowed_set:
-            return True
-
-    return False
+    read_grant = _build_read_grant(command)
+    return read_grant is not None and read_grant in allowed_set
 
 
 def is_always_prompt_command(command: str) -> bool:

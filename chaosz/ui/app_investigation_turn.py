@@ -12,9 +12,16 @@ from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import build_api_params, get_client, get_native_ollama_client
 from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session
-from chaosz.state import state
+from chaosz.state import _permission_event, state
 from chaosz.stream_adapters import ToolCall, stream as _stream
-from chaosz.tools import FILE_TOOLS, TOOL_EXECUTORS, tool_file_read
+from chaosz.tools import (
+    FILE_TOOLS,
+    TOOL_EXECUTORS,
+    build_file_read_session_grant,
+    build_file_read_summary,
+    is_file_read_allowed_by_session,
+    tool_file_read,
+)
 from chaosz.ui.stream_utils import unescape_tool_delta
 
 MAX_TREE_ENTRIES = 400
@@ -22,6 +29,11 @@ MAX_TREE_DEPTH = 4
 MAX_SELECTED_FILES = 16
 MAX_CONTEXT_CHARS = 140_000
 MAX_SELECTION_RESPONSE_CHARS = 40_000
+INVESTIGATION_TOOL_NAMES = {"file_read", "web_search"}
+INVESTIGATION_TOOLS = [
+    tool for tool in FILE_TOOLS
+    if tool.get("function", {}).get("name") in INVESTIGATION_TOOL_NAMES
+]
 
 SKIP_DIRS = {
     ".git",
@@ -205,6 +217,87 @@ def _build_context_bundle(selections: list[dict]) -> tuple[str, list[str]]:
     return "\n".join(chunks), used
 
 
+def _selected_files_summary(selections: list[dict]) -> str:
+    paths = [s["path"] for s in selections]
+    preview = ", ".join(paths[:5])
+    if len(paths) > 5:
+        preview += f", ... ({len(paths)} files total)"
+    return f"read selected investigation files: {preview}"
+
+
+def _grant_selected_file_reads(selections: list[dict]) -> None:
+    for sel in selections:
+        args = {"path": sel["path"], "start_line": sel["start_line"]}
+        if sel["end_line"] is not None:
+            args["end_line"] = sel["end_line"]
+        grant = build_file_read_session_grant(args)
+        if grant:
+            state.permissions.file_read_session_allowed.add(grant)
+
+
+def _selected_file_reads_allowed(selections: list[dict]) -> bool:
+    for sel in selections:
+        args = {"path": sel["path"], "start_line": sel["start_line"]}
+        if sel["end_line"] is not None:
+            args["end_line"] = sel["end_line"]
+        if not is_file_read_allowed_by_session(args, state.permissions.file_read_session_allowed):
+            return False
+    return True
+
+
+def _request_selected_file_read_permission(app, selections: list[dict]) -> bool:
+    if _selected_file_reads_allowed(selections):
+        return True
+
+    _permission_event.clear()
+    state.permissions.granted = False
+    app.call_from_thread(app._stop_glitch)
+    app.call_from_thread(
+        app._show_tool_permission_prompt,
+        "file_read",
+        _selected_files_summary(selections),
+        None,
+    )
+    _permission_event.wait()
+    state.permissions.awaiting = False
+    app.call_from_thread(app._start_glitch)
+
+    if not state.permissions.granted:
+        return False
+    if state.permissions.file_session_granted:
+        _grant_selected_file_reads(selections)
+        state.permissions.file_session_granted = False
+    return True
+
+
+def _execute_permitted_file_read(app, args: dict) -> tuple[str, str]:
+    path_display = args.get("path", "?")
+    if is_file_read_allowed_by_session(args, state.permissions.file_read_session_allowed):
+        status, content = tool_file_read(args)
+        app.call_from_thread(app._write, "", Text(f"  [read] {path_display} (session)", style="dim cyan"))
+        return status, content
+
+    _permission_event.clear()
+    state.permissions.granted = False
+    app.call_from_thread(app._stop_glitch)
+    app.call_from_thread(app._show_tool_permission_prompt, "file_read", build_file_read_summary(args), None)
+    _permission_event.wait()
+    state.permissions.awaiting = False
+    app.call_from_thread(app._start_glitch)
+
+    if not state.permissions.granted:
+        return "denied", f"File read '{path_display}' denied by user."
+    if state.permissions.file_session_granted:
+        grant = build_file_read_session_grant(args)
+        if grant:
+            state.permissions.file_read_session_allowed.add(grant)
+        state.permissions.file_session_granted = False
+    status, content = tool_file_read(args)
+    color = "dim cyan" if status == "ok" else "red"
+    app.call_from_thread(app._write, "", Text(f"  [read] {path_display} → {content[:80]}", style=color))
+    return status, content
+
+
 def run_investigation_turn(app, user_input: str) -> None:
     def _thread() -> None:
         state.ui.is_thinking = True
@@ -285,6 +378,9 @@ def run_investigation_turn(app, user_input: str) -> None:
                 return
 
             app.call_from_thread(app._set_status, "Investigation: reading selected files")
+            if not _request_selected_file_read_permission(app, selections):
+                _persist_and_render(app, "Investigation cancelled: file read denied by user.", style="yellow")
+                return
             bundle, used_paths = _build_context_bundle(selections)
             if not used_paths:
                 _persist_and_render(
@@ -319,7 +415,7 @@ def run_investigation_turn(app, user_input: str) -> None:
             MAX_TOOL_LOOPS = 10
 
             for _loop_iter in range(MAX_TOOL_LOOPS):
-                tools = FILE_TOOLS
+                tools = INVESTIGATION_TOOLS
 
                 tool_calls_received: list[ToolCall] = []
                 full_response = ""
@@ -420,6 +516,8 @@ def run_investigation_turn(app, user_input: str) -> None:
                         log_status, result_content = TOOL_EXECUTORS["web_search"](tc_args)
                         path_display = tc_args.get("query", "?")
                         app.call_from_thread(app._write, "", Text(f"  [search] {path_display}", style="dim cyan"))
+                    elif fname == "file_read":
+                        _log_status, result_content = _execute_permitted_file_read(app, tc_args)
                     else:
                         result_content = f"Tool '{fname}' is not available in investigation mode."
                     tool_result_msgs.append({

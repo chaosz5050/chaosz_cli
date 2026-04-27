@@ -255,6 +255,30 @@ def resolve_safe_path(rel_path: str) -> tuple[str | None, str | None]:
     return candidate, None
 
 
+def build_file_read_session_grant(args: dict) -> str | None:
+    """Return the normalized path covered by a session file-read approval."""
+    path, err = resolve_safe_path(args.get("path", ""))
+    if err:
+        return None
+    return path
+
+
+def is_file_read_allowed_by_session(args: dict, allowed_set: set[str]) -> bool:
+    grant = build_file_read_session_grant(args)
+    return grant is not None and grant in allowed_set
+
+
+def build_file_read_summary(args: dict) -> str:
+    path = args.get("path", "?")
+    start_line = args.get("start_line")
+    end_line = args.get("end_line")
+    if start_line is None and end_line is None:
+        return f"read '{path}'"
+    if end_line is None:
+        return f"read '{path}' from line {start_line}"
+    return f"read '{path}' lines {start_line}:{end_line}"
+
+
 # ---------------------------------------------------------------------------
 # Tool executors
 # ---------------------------------------------------------------------------

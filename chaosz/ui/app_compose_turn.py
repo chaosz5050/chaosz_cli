@@ -10,15 +10,22 @@ from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session
 from chaosz.shell import (
-    DANGEROUS_OPS,
-    READ_ONLY_CMDS,
+    build_shell_session_grants,
     is_always_prompt_command,
     is_command_allowed_by_session,
     tool_shell_exec,
 )
 from chaosz.state import _permission_event, state
 from chaosz.stream_adapters import ToolCall, stream as _stream
-from chaosz.tools import FILE_TOOLS, TOOL_EXECUTORS, _build_diff, _build_op_summary
+from chaosz.tools import (
+    FILE_TOOLS,
+    TOOL_EXECUTORS,
+    _build_diff,
+    _build_op_summary,
+    build_file_read_session_grant,
+    build_file_read_summary,
+    is_file_read_allowed_by_session,
+)
 from chaosz.ui.stream_utils import unescape_tool_delta
 
 COMPOSE_SYSTEM_INSTRUCTION = (
@@ -218,10 +225,32 @@ def run_compose_turn(app, _user_input: str) -> None:
                         path_display = tc_args.get("query", "?")
                         app.call_from_thread(app._write, "", Text(f"  [search] {path_display}", style="dim cyan"))
                     elif fname == "file_read":
-                        # Non-destructive: execute immediately, no confirmation
-                        _log_status, result_content = executor(tc_args)
                         path_display = tc_args.get("path", "?")
-                        app.call_from_thread(app._write, "", Text(f"  [read] {path_display}", style="dim cyan"))
+                        if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed):
+                            _log_status, result_content = executor(tc_args)
+                            app.call_from_thread(app._write, "", Text(f"  [read] {path_display} (session)", style="dim cyan"))
+                        else:
+                            _permission_event.clear()
+                            state.permissions.granted = False
+                            app.call_from_thread(app._stop_glitch)
+                            app.call_from_thread(app._show_tool_permission_prompt, fname, build_file_read_summary(tc_args), None)
+                            _permission_event.wait()
+                            state.permissions.awaiting = False
+                            app.call_from_thread(app._start_glitch)
+
+                            if state.permissions.granted:
+                                if state.permissions.file_session_granted:
+                                    grant = build_file_read_session_grant(tc_args)
+                                    if grant:
+                                        state.permissions.file_read_session_allowed.add(grant)
+                                    state.permissions.file_session_granted = False
+                                _log_status, result_content = executor(tc_args)
+                            else:
+                                _log_status = "denied"
+                                result_content = f"File read '{path_display}' denied by user."
+
+                            color = "dim cyan" if _log_status == "ok" else ("yellow" if _log_status == "denied" else "red")
+                            app.call_from_thread(app._write, "", Text(f"  [read] {path_display} → {result_content[:80]}", style=color))
                     elif fname == "shell_exec":
                         command = tc_args.get("command", "")
                         reason = tc_args.get("reason", "")
@@ -243,17 +272,9 @@ def run_compose_turn(app, _user_input: str) -> None:
 
                             if state.permissions.granted:
                                 if state.permissions.shell_session_granted and not always_prompt:
-                                    state.permissions.shell_session_allowed.add(command)
-
-                                    # Extract base command and add it if it's safe read-only
-                                    import os
-                                    words = command.strip().split()
-                                    if words:
-                                        base_cmd = os.path.basename(words[0])
-                                        if base_cmd in READ_ONLY_CMDS and not any(
-                                            op in command for op in DANGEROUS_OPS
-                                        ):
-                                            state.permissions.shell_session_allowed.add(base_cmd)
+                                    state.permissions.shell_session_allowed.update(
+                                        build_shell_session_grants(command)
+                                    )
 
                                 if command.strip().startswith("sudo "):
                                     state.ui.mode = "PASSWORD"

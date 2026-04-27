@@ -4,7 +4,8 @@ Tests for shell.py — pure helper functions, no I/O required.
 
 import pytest
 
-from chaosz.shell import is_always_prompt_command, is_command_allowed_by_session
+from chaosz.shell import build_shell_session_grants, is_always_prompt_command, is_command_allowed_by_session
+from chaosz.state import state
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +60,8 @@ def test_is_command_allowed_by_session_not_in_set():
     assert is_command_allowed_by_session("git status", set()) is False
 
 
-def test_is_command_allowed_by_session_readonly_base_in_set():
-    # "ls" base command is in the allowed set → full invocation allowed
-    assert is_command_allowed_by_session("ls -la /tmp", {"ls"}) is True
+def test_is_command_allowed_by_session_readonly_base_in_set_no_longer_broad():
+    assert is_command_allowed_by_session("ls -la /tmp", {"ls"}) is False
 
 
 def test_is_command_allowed_by_session_readonly_base_not_in_set():
@@ -69,7 +69,6 @@ def test_is_command_allowed_by_session_readonly_base_not_in_set():
 
 
 def test_is_command_allowed_by_session_readonly_with_dangerous_op_rejected():
-    # Pipe makes even a whitelisted read-only command unsafe
     assert is_command_allowed_by_session("ls | rm -rf /", {"ls"}) is False
 
 
@@ -78,9 +77,37 @@ def test_is_command_allowed_by_session_redirect_rejected():
 
 
 def test_is_command_allowed_by_session_non_readonly_base_not_whitelisted():
-    # "pip" is not in READ_ONLY_CMDS, so base-command matching doesn't apply
     assert is_command_allowed_by_session("pip install requests", {"pip"}) is False
 
 
 def test_is_command_allowed_by_session_empty_command():
     assert is_command_allowed_by_session("", {"ls"}) is False
+
+
+def test_pattern_grant_allows_same_directory_glob_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    grants = build_shell_session_grants("ls re*")
+
+    assert is_command_allowed_by_session("ls ri*", grants) is True
+
+
+def test_pattern_grant_rejects_pipe_even_when_shape_matches(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    grants = build_shell_session_grants("ls re*")
+
+    assert is_command_allowed_by_session("ls ri* | wc -l", grants) is False
+
+
+def test_pattern_grant_rejects_path_outside_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    grants = build_shell_session_grants("cat *.py")
+
+    assert is_command_allowed_by_session("cat /tmp/*.py", grants) is False
+
+
+def test_pattern_grant_does_not_apply_to_find(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    grants = build_shell_session_grants("find src*")
+
+    assert "find src*" in grants
+    assert is_command_allowed_by_session("find lib*", grants) is False
