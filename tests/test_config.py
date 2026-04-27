@@ -187,3 +187,12 @@ def test_build_system_prompt_includes_memory():
         prompt = cfg.build_system_prompt()
 
     assert "name is Alice" in prompt
+
+
+def test_default_system_prompt_distinguishes_shell_from_file_sandbox():
+    prompt = cfg.DEFAULT_SYSTEM_PROMPT
+
+    assert "File tool paths are resolved relative to the current working directory" in prompt
+    assert "Shell commands run with the current working directory set to the workspace" in prompt
+    assert "not OS-sandboxed or path-rewritten like file tools" in prompt
+    assert "Do not use absolute paths or access files outside the workspace" in prompt
