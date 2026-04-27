@@ -2,6 +2,8 @@ import os
 import json
 import re
 import shutil
+import tempfile
+from datetime import datetime
 
 from chaosz.state import state
 
@@ -11,6 +13,7 @@ MEMORY_FILE  = os.path.join(CHAOSZ_DIR, "memory.json")
 HISTORY_FILE = os.path.join(CHAOSZ_DIR, "history.json")
 LOG_FILE     = os.path.join(CHAOSZ_DIR, "llm.log")
 VALID_CATEGORIES = {"about_user", "preferences", "projects", "top_of_mind", "workspace_context"}
+_BACKED_UP_CORRUPT_CONFIGS: set[tuple[str, int, int]] = set()
 
 
 def ensure_chaosz_dir() -> None:
@@ -23,6 +26,49 @@ def _ensure_parent_dir(path: str) -> None:
     if parent:
         os.makedirs(parent, exist_ok=True)
         os.chmod(parent, 0o700)
+
+
+def _config_file_signature(path: str) -> tuple[str, int, int] | None:
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        return None
+    return (os.path.abspath(path), stat_result.st_mtime_ns, stat_result.st_size)
+
+
+def _next_corrupt_backup_path(path: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    base_path = f"{path}.corrupt-{timestamp}"
+    backup_path = base_path
+    counter = 1
+    while os.path.exists(backup_path):
+        backup_path = f"{base_path}-{counter}"
+        counter += 1
+    return backup_path
+
+
+def _backup_corrupt_config_file(path: str | None = None, *, require_success: bool = False) -> bool:
+    if path is None:
+        path = CONFIG_FILE
+    if not os.path.exists(path):
+        return True
+
+    signature = _config_file_signature(path)
+    if signature is not None and signature in _BACKED_UP_CORRUPT_CONFIGS:
+        return True
+
+    try:
+        backup_path = _next_corrupt_backup_path(path)
+        shutil.copy2(path, backup_path)
+        os.chmod(backup_path, 0o600)
+    except OSError:
+        if require_success:
+            raise
+        return False
+
+    if signature is not None:
+        _BACKED_UP_CORRUPT_CONFIGS.add(signature)
+    return True
 
 
 DEFAULT_SYSTEM_PROMPT = """You are an intelligent, autonomous assistant operating globally on the user's machine. You can help with coding, writing, analysis, brainstorming, and anything else the user needs. You prefer clean, well-structured code.
@@ -64,22 +110,40 @@ When executing multi-step tasks, always complete each step in sequence before st
 After completing any agentic task that involved tool use (file writes, edits, deletes, renames, or shell commands), always end your response with a concise 1–2 sentence summary of what you did. Name the specific files changed and the action taken. Do not just say "done" or "finished". This rule applies even when the task was straightforward."""
 
 
-def _read_config_file() -> dict:
+def _read_config_file(*, require_corrupt_backup: bool = False) -> dict:
     if not os.path.exists(CONFIG_FILE):
         return {}
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
     except Exception:
+        _backup_corrupt_config_file(CONFIG_FILE, require_success=require_corrupt_backup)
         return {}
+    if isinstance(data, dict):
+        return data
+    _backup_corrupt_config_file(CONFIG_FILE, require_success=require_corrupt_backup)
+    return {}
 
 
 def _write_config_file(data: dict) -> None:
     _ensure_parent_dir(CONFIG_FILE)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-    os.chmod(CONFIG_FILE, 0o600)
+    _read_config_file(require_corrupt_backup=True)
+
+    parent = os.path.dirname(CONFIG_FILE) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".config.", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, CONFIG_FILE)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------

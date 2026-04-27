@@ -56,6 +56,80 @@ def test_write_config_file_creates_config_dir(tmp_path):
     assert json.loads(config_file.read_text()) == {"theme": "default"}
 
 
+def test_read_config_file_backs_up_invalid_json_once_before_replace(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    chaosz_dir.mkdir()
+    config_file = chaosz_dir / "config.json"
+    config_file.write_text("{bad json", encoding="utf-8")
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "CONFIG_FILE", str(config_file)),
+        patch.object(cfg, "_BACKED_UP_CORRUPT_CONFIGS", set()),
+    ):
+        assert cfg._read_config_file() == {}
+        cfg._write_config_file({"theme": "default"})
+
+    backups = list(chaosz_dir.glob("config.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{bad json"
+    assert json.loads(config_file.read_text(encoding="utf-8")) == {"theme": "default"}
+
+
+def test_write_config_file_backs_up_non_object_json_before_replace(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    chaosz_dir.mkdir()
+    config_file = chaosz_dir / "config.json"
+    config_file.write_text("[]", encoding="utf-8")
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "CONFIG_FILE", str(config_file)),
+        patch.object(cfg, "_BACKED_UP_CORRUPT_CONFIGS", set()),
+    ):
+        cfg._write_config_file({"theme": "default"})
+
+    backups = list(chaosz_dir.glob("config.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "[]"
+    assert json.loads(config_file.read_text(encoding="utf-8")) == {"theme": "default"}
+
+
+def test_write_config_file_does_not_backup_valid_json(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    chaosz_dir.mkdir()
+    config_file = chaosz_dir / "config.json"
+    config_file.write_text('{"theme": "old"}', encoding="utf-8")
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "CONFIG_FILE", str(config_file)),
+        patch.object(cfg, "_BACKED_UP_CORRUPT_CONFIGS", set()),
+    ):
+        cfg._write_config_file({"theme": "default"})
+
+    assert list(chaosz_dir.glob("config.json.corrupt-*")) == []
+    assert json.loads(config_file.read_text(encoding="utf-8")) == {"theme": "default"}
+
+
+def test_write_config_file_keeps_existing_config_if_temp_write_fails(tmp_path):
+    chaosz_dir = tmp_path / "chaosz"
+    chaosz_dir.mkdir()
+    config_file = chaosz_dir / "config.json"
+    config_file.write_text('{"theme": "old"}', encoding="utf-8")
+
+    with (
+        patch.object(cfg, "CHAOSZ_DIR", str(chaosz_dir)),
+        patch.object(cfg, "CONFIG_FILE", str(config_file)),
+        patch.object(cfg, "_BACKED_UP_CORRUPT_CONFIGS", set()),
+        pytest.raises(TypeError),
+    ):
+        cfg._write_config_file({"bad": object()})
+
+    assert json.loads(config_file.read_text(encoding="utf-8")) == {"theme": "old"}
+    assert list(chaosz_dir.glob(".config.*.tmp")) == []
+
+
 def test_save_input_history_creates_config_dir(tmp_path):
     chaosz_dir = tmp_path / "chaosz"
     history_file = chaosz_dir / "history.json"
