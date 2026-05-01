@@ -412,6 +412,18 @@ class ChaoszApp(App):
                 if names:
                     confirm_theme_switch(self, names[state.ui.theme_menu_index])
             return
+        if state.ui.mode == "PLAN_APPROVE":
+            if event.key == "up":
+                event.prevent_default()
+                self._navigate_plan_approval_menu(-1)
+            elif event.key == "down":
+                event.prevent_default()
+                self._navigate_plan_approval_menu(1)
+            elif event.key == "enter":
+                event.prevent_default()
+                from chaosz.ui.app_input_modes import _handle_mode_plan_approve
+                _handle_mode_plan_approve(self)
+            return
         if event.key == "escape":
             if state.ui.is_thinking:
                 from chaosz.ui.app_ai_turn import request_cancel

@@ -181,7 +181,7 @@ def run_reflection_pass(app) -> bool:
     Must be called from a background thread.
     """
     from chaosz.config import VALID_CATEGORIES
-    from chaosz.providers import build_api_params, get_client, get_native_ollama_client
+    from chaosz.providers import build_api_params, get_client, get_native_ollama_client, PROVIDER_REGISTRY
 
     # Read live session
     if not os.path.exists(LIVE_SESSION):
@@ -283,10 +283,25 @@ def run_reflection_pass(app) -> bool:
                 ],
                 stream=False,
             )
-            params["timeout"] = 30
+            # Reflection is lightweight — override any reasoning-mode settings
+            # that would cause huge token counts or slow responses.
+            params["max_tokens"] = 4096
+            params["timeout"] = 60
             params["response_format"] = {"type": "json_object"}
+            if params.get("extra_body", {}).get("thinking", {}).get("type") == "enabled":
+                params["extra_body"]["thinking"] = {"type": "disabled"}
+                # thinking=enabled removed temperature; restore it now that thinking is off
+                reg = PROVIDER_REGISTRY.get(state.provider.active, {})
+                if not reg.get("no_sampling_params") and "temperature" not in params:
+                    params["temperature"] = state.provider.temperature
             response = client.chat.completions.create(**params)
             raw = response.choices[0].message.content.strip()
+
+        # Strip markdown fences — some models wrap JSON despite the json_object format hint
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[^\n]*\n?", "", raw)
+            raw = re.sub(r"\n?```\s*$", "", raw)
+            raw = raw.strip()
 
         updated_data = json.loads(raw)
 

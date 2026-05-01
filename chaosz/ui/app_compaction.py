@@ -8,7 +8,8 @@ from chaosz.state import state
 def estimate_tokens(_app, messages):
     """Approximate token count for a list of messages."""
     total_chars = sum(len(msg.get("content", "")) for msg in messages if msg.get("content"))
-    return total_chars // 4
+    # Add a fixed overhead for the tool schema sent with every API call (~1000 tokens)
+    return (total_chars + 4000) // 4
 
 
 def filter_messages_for_summary(_app, messages):
@@ -74,7 +75,16 @@ def generate_summary(app, messages):
                 summary_messages,
                 stream=False,
             )
-            params["timeout"] = 45
+            # Compaction is a background task — disable reasoning mode so we don't
+            # wait for a 32K-token thinking response and blow past the timeout.
+            if params.get("extra_body", {}).get("thinking", {}).get("type") == "enabled":
+                params["extra_body"]["thinking"] = {"type": "disabled"}
+                params["max_tokens"] = state.provider.max_output_tokens
+                from chaosz.providers import PROVIDER_REGISTRY
+                reg = PROVIDER_REGISTRY.get(state.provider.active, {})
+                if not reg.get("no_sampling_params") and "temperature" not in params:
+                    params["temperature"] = state.provider.temperature
+            params["timeout"] = 60
             response = client.chat.completions.create(**params)
             return response.choices[0].message.content.strip()
     except Exception as e:
