@@ -81,8 +81,11 @@ def _write_tool_result_log_entry(
             if preview and not preview.endswith("\n"):
                 f.write("\n")
             f.write("--- full_result ---\n")
-            f.write(result_content)
-            if result_content and not result_content.endswith("\n"):
+            log_limit = 2000
+            f.write(result_content[:log_limit])
+            if len(result_content) > log_limit:
+                f.write(f"\n... [{len(result_content) - log_limit} chars truncated from log]\n")
+            elif result_content and not result_content.endswith("\n"):
                 f.write("\n")
             f.write("==== END TOOL RESULT ====\n\n")
     except OSError:
