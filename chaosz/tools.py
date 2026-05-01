@@ -289,10 +289,16 @@ def tool_file_read(args: dict) -> tuple[str, str]:
         return "error", err
     if os.path.isdir(path):
         return "ok", list_directory(path)
-    start_line = int(args.get("start_line", 0))
+    try:
+        start_line = int(args.get("start_line", 0))
+    except (ValueError, TypeError):
+        return "error", "start_line must be an integer."
     end_line = args.get("end_line")
     if end_line is not None:
-        end_line = int(end_line)
+        try:
+            end_line = int(end_line)
+        except (ValueError, TypeError):
+            return "error", "end_line must be an integer."
     return "ok", read_file(path, max_lines=MAX_FILE_LINES, start_line=start_line, end_line=end_line)
 
 
@@ -373,7 +379,10 @@ def tool_file_rename(args: dict) -> tuple[str, str]:
 def tool_web_search(args: dict) -> tuple[str, str]:
     from ddgs import DDGS
     query = args.get("query", "").strip()
-    max_results = min(int(args.get("max_results", 5)), 10)
+    try:
+        max_results = min(int(args.get("max_results", 5)), 10)
+    except (ValueError, TypeError):
+        max_results = 5
     if not query:
         return "error", "No query provided."
     try:

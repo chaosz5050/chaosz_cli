@@ -714,6 +714,7 @@ def list_skills() -> list[str]:
 
 def load_skill(name: str) -> str:
     """Read and return skill content. Returns empty string on failure."""
+    name = os.path.basename(name)
     path = os.path.join(get_skills_dir(), f"{name}.md")
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -724,6 +725,7 @@ def load_skill(name: str) -> str:
 
 def save_skill(name: str, content: str) -> None:
     """Write skill content to skills/<name>.md in the working directory."""
+    name = os.path.basename(name)
     skills_dir = get_skills_dir()
     os.makedirs(skills_dir, exist_ok=True)
     path = os.path.join(skills_dir, f"{name}.md")
@@ -733,6 +735,7 @@ def save_skill(name: str, content: str) -> None:
 
 def delete_skill(name: str) -> bool:
     """Delete skills/<name>.md. Returns True on success, False if not found."""
+    name = os.path.basename(name)
     path = os.path.join(get_skills_dir(), f"{name}.md")
     try:
         os.remove(path)

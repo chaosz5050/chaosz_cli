@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import re
 import shutil
@@ -116,8 +117,9 @@ def _read_config_file(*, require_corrupt_backup: bool = False) -> dict:
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
         _backup_corrupt_config_file(CONFIG_FILE, require_success=require_corrupt_backup)
+        print(f"Warning: config file unreadable ({e}); backed up and starting with defaults.", file=sys.stderr)
         return {}
     if isinstance(data, dict):
         return data
@@ -256,7 +258,9 @@ def load_input_history() -> list[str]:
         try:
             data = json.load(f)
             return data if isinstance(data, list) else []
-        except Exception: return []
+        except Exception as e:
+            print(f"Warning: could not read input history ({e}); starting fresh.", file=sys.stderr)
+            return []
 
 def save_input_history(history: list[str]) -> None:
     _ensure_parent_dir(HISTORY_FILE)
@@ -275,7 +279,9 @@ def load_memory():
             for cat in VALID_CATEGORIES:
                 if cat not in mem: mem[cat] = []
             return mem
-        except Exception: return {cat: [] for cat in VALID_CATEGORIES}
+        except Exception as e:
+            print(f"Warning: could not read memory file ({e}); starting with empty memory.", file=sys.stderr)
+            return {cat: [] for cat in VALID_CATEGORIES}
 
 
 def save_memory(memory: dict) -> None:

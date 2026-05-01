@@ -448,7 +448,8 @@ def generate_and_save_session(app) -> bool:
         summary = str(data.get("summary", ""))
         key_decisions = list(data.get("key_decisions", []))
         unresolved_issues = list(data.get("unresolved_issues", []))
-    except Exception:
+    except Exception as e:
+        _log_error(f"ERROR run_reflection_pass: {e}")
         return False
 
     files_touched = list({e["path"] for e in state.workspace.file_op_log if e.get("path")})
