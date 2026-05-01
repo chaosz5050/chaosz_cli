@@ -1,6 +1,6 @@
 # Chaosz CLI
 
-[![Version](https://img.shields.io/badge/version-0.9.0-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
+[![Version](https://img.shields.io/badge/version-0.9.1-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
 [![License](https://img.shields.io/badge/license-Source%20Available-orange?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square&logo=linux&logoColor=white)](https://github.com/chaosz5050/chaosz_cli)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
