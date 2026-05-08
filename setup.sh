@@ -46,7 +46,7 @@ if ! command -v pipx >/dev/null 2>&1; then
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         if command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --noconfirm pipx
+            sudo pacman -S --noconfirm python-pipx
         elif command -v apt >/dev/null 2>&1; then
             sudo apt update && sudo apt install -y pipx
         elif command -v dnf >/dev/null 2>&1; then
