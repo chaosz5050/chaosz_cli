@@ -9,25 +9,25 @@ NC='\033[0m'
 
 echo -e "${GREEN}== Chaosz CLI Launcher ==${NC}"
 
-# 1. Check for Poetry
-if ! command -v poetry &> /dev/null; then
-    echo -e "${YELLOW}Poetry is not installed.${NC}"
-    read -p "Would you like to install Poetry now? (y/N) " -n 1 -r
+# 1. Check for uv
+if ! command -v uv &> /dev/null; then
+    echo -e "${YELLOW}uv is not installed.${NC}"
+    read -p "Would you like to install uv now? (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN}Installing Poetry...${NC}"
-        curl -sSL https://install.python-poetry.org | python3 -
+        echo -e "${GREEN}Installing uv...${NC}"
+        curl -LsSf https://astral.sh/uv/install.sh | sh
         export PATH="$HOME/.local/bin:$PATH"
     else
-        echo -e "${RED}Poetry is required to run this application. Exiting.${NC}"
+        echo -e "${RED}uv is required to run this application. Exiting.${NC}"
         exit 1
     fi
 fi
 
-# 2. Install dependencies via Poetry
+# 2. Install dependencies via uv
 echo -e "${GREEN}Installing dependencies...${NC}"
-poetry install
+uv sync
 
 # 3. Launch application
 echo -e "${GREEN}Launching Chaosz CLI...${NC}"
-poetry run chaosz
+uv run chaosz

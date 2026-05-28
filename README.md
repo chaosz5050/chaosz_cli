@@ -57,19 +57,19 @@ The short version: **Ollama is fine for chatting and quick questions. For anythi
 
 ## Installation
 
-Requires **Linux**, Python 3.11+, and [Poetry](https://python-poetry.org/).
+Requires **Linux**, Python 3.11+, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 ./run.sh
 ```
 
-The script installs Poetry if missing, installs dependencies, and launches the app.
+The script installs uv if missing, installs dependencies, and launches the app.
 
 Or manually:
 
 ```bash
-poetry install
-poetry run chaosz
+uv sync
+uv run chaosz
 ```
 
 ## Configuration

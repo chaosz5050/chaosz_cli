@@ -1,32 +1,34 @@
-[tool.poetry]
+[project]
 name = "chaosz-cli"
 version = "0.9.1"
 description = "A Python CLI AI API wrapper"
-authors = ["Chaosz Software"]
+authors = [{name = "Chaosz Software"}]
 readme = "README.md"
-packages = [{include = "chaosz"}]
-include = [
-    {path = "chaosz/ui/theme_files/*.theme"}
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "rich>=13.0.0",
+    "textual>=0.60.0",
+    "ddgs>=9.12.1",
+    "ollama>=0.4.0",
+    "google-genai>=1.10.0",
+    "mcp>=1.9.0,<2.0.0",
 ]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-openai = ">=1.0.0"
-rich = ">=13.0.0"
-textual = ">=0.60.0"
-ddgs = "^9.12.1"
-ollama = ">=0.4.0"
-google-genai = ">=1.10.0"
-mcp = ">=1.9.0,<2.0.0"
-
-[tool.poetry.scripts]
+[project.scripts]
 chaosz = "chaosz.main:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chaosz"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"chaosz/ui/theme_files" = "chaosz/ui/theme_files"
 
 [dependency-groups]
 dev = [
-    "pytest (>=9.0.3,<10.0.0)"
+    "pytest>=9.0.3,<10.0.0",
 ]
