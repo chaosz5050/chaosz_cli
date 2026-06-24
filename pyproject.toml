@@ -25,9 +25,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["chaosz"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"chaosz/ui/theme_files" = "chaosz/ui/theme_files"
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.3,<10.0.0",

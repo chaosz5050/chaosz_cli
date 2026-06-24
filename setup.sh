@@ -87,8 +87,16 @@ else
 fi
 
 # 4b. The Install
+# Uninstall any existing install first. `pipx install . --force` is unreliable
+# on pipx builds that use uv as the venv backend: on reinstall uv refuses to
+# recreate the existing venv ("A virtual environment already exists") instead of
+# clearing it. A clean uninstall sidesteps that entirely.
 echo "[INSTALLING] Installing Chaosz CLI globally via pipx..."
-pipx install . --force
+if pipx list --short 2>/dev/null | grep -q '^chaosz-cli '; then
+    echo "[INSTALLING] Removing existing chaosz-cli install..."
+    pipx uninstall chaosz-cli >/dev/null 2>&1 || true
+fi
+pipx install .
 
 # 5. Path Verification
 echo "[CHECK] Verifying pipx path..."
