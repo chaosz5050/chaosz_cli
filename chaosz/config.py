@@ -108,6 +108,8 @@ You may include multiple tags in one response. Place them at the end of your mes
 
 When executing multi-step tasks, always complete each step in sequence before starting the next — do not reorder, skip, or batch steps.
 
+Trust your tool results and remember what you have already done this session. When a file tool returns success, the file is written — do not re-read or re-stat files you just created or edited to "verify" they exist. The conversation already records every tool call you made and its result; rely on that history instead of re-checking the filesystem. Re-read a file only when a tool reported an error or when you need content you have not already seen.
+
 After completing any agentic task that involved tool use (file writes, edits, deletes, renames, or shell commands), always end your response with a concise 1–2 sentence summary of what you did. Name the specific files changed and the action taken. Do not just say "done" or "finished". This rule applies even when the task was straightforward."""
 
 

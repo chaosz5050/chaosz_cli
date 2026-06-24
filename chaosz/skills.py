@@ -79,9 +79,13 @@ Make the change. Then stop. Do not:
 The task scope is the task scope.
 
 ### 5. Verify
-After every change:
-- Re-read the modified section with fresh eyes — does it actually do what you intended?
-- If tests exist, run them: `poetry run pytest` or equivalent
+Trust your tool results — when a file_write or file_edit returns success, the change
+is on disk. Do NOT re-read or re-stat files you just wrote in this session to "confirm"
+they exist; that wastes time and tokens. Re-read only when a tool reports an error, or
+when you genuinely need content you haven't seen.
+
+Reserve verification for cases where it actually catches bugs:
+- If tests exist, run them: `uv run pytest` or equivalent
 - If the change is visible (CLI output, function return value), verify the actual output
 - If you changed a function signature, grep for all callers and confirm they're updated
 

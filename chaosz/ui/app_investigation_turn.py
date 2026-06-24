@@ -11,7 +11,7 @@ from rich.text import Text
 from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import build_api_params, get_client, get_native_ollama_client
 from chaosz.providers import provider_requires_reasoning_echo
-from chaosz.session import append_to_live_session
+from chaosz.session import append_to_live_session, persist_tool_round
 from chaosz.state import _permission_event, state
 from chaosz.stream_adapters import ToolCall, stream as _stream
 from chaosz.tools import (
@@ -500,13 +500,14 @@ def run_investigation_turn(app, user_input: str) -> None:
                         "args": parsed_args,
                     })
 
-                analysis_msgs.append({
+                assistant_tool_msg = {
                     "role": "assistant",
                     "content": full_response or None,
                     "tool_calls": tool_calls_for_msg,
-                })
+                }
                 if reasoning_content and state.reasoning.enabled and provider_requires_reasoning_echo(state.provider.active):
-                    analysis_msgs[-1]["reasoning_content"] = reasoning_content
+                    assistant_tool_msg["reasoning_content"] = reasoning_content
+                analysis_msgs.append(assistant_tool_msg)
 
                 tool_result_msgs = []
                 for tc in tool_calls_parsed:
@@ -527,6 +528,9 @@ def run_investigation_turn(app, user_input: str) -> None:
                     })
 
                 analysis_msgs.extend(tool_result_msgs)
+                # Persist this tool round so the model retains a record of what it
+                # read on subsequent turns instead of re-reading the same files.
+                persist_tool_round(assistant_tool_msg, tool_result_msgs)
 
             _persist_and_render(app, process_memory_tags(final_text))
 

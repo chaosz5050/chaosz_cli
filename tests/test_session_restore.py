@@ -113,6 +113,82 @@ def test_restore_skips_tool_role_messages(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Matched tool-call / tool-result pairs are preserved across restart
+# ---------------------------------------------------------------------------
+
+def test_restore_keeps_matched_tool_call_and_result(tmp_path):
+    """Assistant tool_calls + a matching tool result → both kept, paired."""
+    session_file = tmp_path / "session_001.json"
+    _write_session(session_file, [
+        {"role": "user", "content": "write run.sh"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "tc_1", "function": {"name": "file_write", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "tc_1", "content": "File written: run.sh"},
+        {"role": "assistant", "content": "Created run.sh."},
+    ])
+
+    with patch.object(sess, "LIVE_SESSION", str(session_file)):
+        sess.restore_session()
+
+    msgs = state.session.messages
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    assert msgs[1]["tool_calls"][0]["id"] == "tc_1"
+    assert msgs[2]["tool_call_id"] == "tc_1"
+    assert msgs[2]["content"] == "File written: run.sh"
+
+
+def test_restore_keeps_multiple_matched_results(tmp_path):
+    """Assistant with two tool_calls, both results present → all kept."""
+    session_file = tmp_path / "session_001.json"
+    _write_session(session_file, [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "tc_a", "function": {"name": "file_write", "arguments": "{}"}},
+                {"id": "tc_b", "function": {"name": "file_write", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "tc_a", "content": "ok a"},
+        {"role": "tool", "tool_call_id": "tc_b", "content": "ok b"},
+    ])
+
+    with patch.object(sess, "LIVE_SESSION", str(session_file)):
+        sess.restore_session()
+
+    msgs = state.session.messages
+    assert [m["role"] for m in msgs] == ["assistant", "tool", "tool"]
+    assert {m["tool_call_id"] for m in msgs[1:]} == {"tc_a", "tc_b"}
+
+
+def test_restore_strips_partially_matched_tool_calls(tmp_path):
+    """Two tool_calls but only one result → dangling, strip to content only."""
+    session_file = tmp_path / "session_001.json"
+    _write_session(session_file, [
+        {
+            "role": "assistant",
+            "content": "Doing two things.",
+            "tool_calls": [
+                {"id": "tc_a", "function": {"name": "file_write", "arguments": "{}"}},
+                {"id": "tc_b", "function": {"name": "file_write", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "tc_a", "content": "ok a"},
+    ])
+
+    with patch.object(sess, "LIVE_SESSION", str(session_file)):
+        sess.restore_session()
+
+    # Dangling tc_b → tool_calls dropped, the unmatched tool message dropped too.
+    assert state.session.messages == [
+        {"role": "assistant", "content": "Doing two things."},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 

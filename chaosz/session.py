@@ -148,6 +148,46 @@ def append_to_live_session(role: str, content: str) -> None:
             _log_error(f"ERROR append_to_live_session: {e}")
 
 
+def append_message_to_live_session(msg: dict) -> None:
+    """Append a full message dict (preserving tool_calls / tool_call_id) to the
+    live session file. Used to persist the AI's tool-call and tool-result
+    messages so the model retains a record of its own actions across turns.
+    Silently skips on error."""
+    if not os.path.exists(LIVE_SESSION):
+        return
+    with state.session.lock:
+        try:
+            with open(LIVE_SESSION, "r") as f:
+                data = json.load(f)
+            entry = dict(msg)
+            entry.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+            data["messages"].append(entry)
+            with open(LIVE_SESSION, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            _log_error(f"ERROR append_message_to_live_session: {e}")
+
+
+def persist_tool_round(assistant_msg: dict, tool_result_msgs: list[dict]) -> None:
+    """Persist one round of tool use — the assistant message carrying the
+    tool_calls plus its matching tool-result messages — into both the live
+    in-memory history (state.session.messages) and the on-disk session.
+
+    This is what lets the model remember what it already did (files written,
+    commands run) across turns instead of re-verifying its own work each step.
+    The assistant message and its results are persisted together so they stay
+    paired (no dangling tool_call_ids).
+    """
+    with state.session.lock:
+        state.session.messages.append(assistant_msg)
+        state.session.messages.extend(tool_result_msgs)
+    # append_message_to_live_session acquires the (non-reentrant) session lock
+    # itself, so it must be called outside the block above.
+    append_message_to_live_session(assistant_msg)
+    for m in tool_result_msgs:
+        append_message_to_live_session(m)
+
+
 # ---------------------------------------------------------------------------
 # Startup cleanup
 # ---------------------------------------------------------------------------
@@ -368,8 +408,14 @@ def restore_session() -> None:
     """Load session_001.json into state.messages on startup.
 
     reflection_summary entries are mapped to a [user, assistant] pair so they
-    are valid API messages. tool/tool_result entries are skipped because their
-    tool_call_ids no longer exist in the new session.
+    are valid API messages.
+
+    An assistant message carrying tool_calls is kept together with its tool
+    results ONLY when every referenced tool_call_id has a matching tool message
+    immediately following it. This lets the model's record of what it did
+    survive a restart. If the results are missing (e.g. the session was
+    collapsed by reflection), the tool_calls are stripped to avoid dangling
+    tool_call_ids that cause API 400 errors on the next call.
     """
     if not os.path.exists(LIVE_SESSION):
         return
@@ -383,23 +429,61 @@ def restore_session() -> None:
     if not messages:
         return
 
-    restored = []
-    for m in messages:
+    restored: list = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
         role = m.get("role")
         content = m.get("content", "")
+
         if role == "reflection_summary":
             restored.append({"role": "user", "content": f"[REFLECTION SUMMARY] {content}"})
             restored.append({"role": "assistant", "content": "Understood. Continuing from where we left off."})
-        elif role in ("user", "assistant"):
-            if role == "assistant" and m.get("tool_calls"):
-                # Strip tool_calls — the corresponding tool results won't be in the
-                # restored session, so including them produces dangling tool_call_ids
-                # that cause API 400 errors on the next call.
-                if content:
-                    restored.append({"role": "assistant", "content": content})
-                # tool-only assistant turns (no content) are skipped entirely
-            else:
-                restored.append({"role": role, "content": content})
+            i += 1
+            continue
+
+        if role == "assistant" and m.get("tool_calls"):
+            tool_calls = m.get("tool_calls") or []
+            needed_ids = {tc.get("id") for tc in tool_calls if tc.get("id")}
+            # Gather the run of tool messages that immediately follows.
+            j = i + 1
+            matched: dict = {}
+            while j < n and messages[j].get("role") == "tool":
+                tcid = messages[j].get("tool_call_id")
+                if tcid in needed_ids and tcid not in matched:
+                    matched[tcid] = messages[j]
+                j += 1
+            if needed_ids and needed_ids.issubset(matched.keys()):
+                # Keep the paired round intact.
+                restored.append({
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": tool_calls,
+                })
+                for tc in tool_calls:
+                    tm = matched.get(tc.get("id"))
+                    if tm is not None:
+                        restored.append({
+                            "role": "tool",
+                            "tool_call_id": tm.get("tool_call_id"),
+                            "content": tm.get("content", ""),
+                        })
+            elif content:
+                # Dangling tool_calls — keep only the assistant text.
+                restored.append({"role": "assistant", "content": content})
+            # Skip past the consumed tool messages either way.
+            i = j
+            continue
+
+        if role == "tool":
+            # Orphan tool message not consumed by a kept round — drop it.
+            i += 1
+            continue
+
+        if role in ("user", "assistant"):
+            restored.append({"role": role, "content": content})
+        i += 1
 
     state.session.messages = restored
 

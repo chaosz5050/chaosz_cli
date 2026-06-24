@@ -728,6 +728,12 @@ def run_ai_turn(app) -> None:
                     )
 
                 api_msgs.extend(tool_result_msgs)
+                # Persist this tool round so the model retains a record of what it
+                # did (files written, commands run) on subsequent turns instead of
+                # re-verifying its own work each step.
+                from chaosz.session import persist_tool_round
+
+                persist_tool_round(assistant_msg, tool_result_msgs)
 
                 if force_break:
                     break

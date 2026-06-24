@@ -8,7 +8,7 @@ from rich.text import Text
 
 from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import provider_requires_reasoning_echo
-from chaosz.session import append_to_live_session
+from chaosz.session import append_to_live_session, persist_tool_round
 from chaosz.shell import (
     build_shell_session_grants,
     is_always_prompt_command,
@@ -181,13 +181,14 @@ def run_compose_turn(app, _user_input: str) -> None:
                         "parse_error": parse_error,
                     })
 
-                api_msgs.append({
+                assistant_tool_msg = {
                     "role": "assistant",
                     "content": full_response or None,
                     "tool_calls": tool_calls_for_msg,
-                })
+                }
                 if reasoning_content and state.reasoning.enabled and provider_requires_reasoning_echo(state.provider.active):
-                    api_msgs[-1]["reasoning_content"] = reasoning_content
+                    assistant_tool_msg["reasoning_content"] = reasoning_content
+                api_msgs.append(assistant_tool_msg)
 
                 # Working directory gate — fires lazily on first tool call requiring it
                 if state.workspace.working_dir is None:
@@ -338,6 +339,10 @@ def run_compose_turn(app, _user_input: str) -> None:
                     })
 
                 api_msgs.extend(tool_result_msgs)
+                # Persist this tool round so the model retains a record of what it
+                # did (files written, commands run) on subsequent turns instead of
+                # re-verifying its own work each step.
+                persist_tool_round(assistant_tool_msg, tool_result_msgs)
 
             raw_text = final_response or "I could not generate a compose response."
             state.session.messages.append({"role": "assistant", "content": raw_text})
