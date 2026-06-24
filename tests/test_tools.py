@@ -1,9 +1,49 @@
+import os
+
 from chaosz.state import state
 from chaosz.tools import (
     build_file_read_session_grant,
     build_file_read_summary,
     is_file_read_allowed_by_session,
+    resolve_safe_path,
 )
+
+
+# ---------------------------------------------------------------------------
+# resolve_safe_path: absolute paths inside the sandbox must NOT be re-rooted
+# (regression: writing /home/.../proj/x.html when working_dir is /home/.../proj
+#  used to produce a doubled phantom path /home/.../proj/home/.../proj/x.html)
+# ---------------------------------------------------------------------------
+
+def test_resolve_absolute_path_inside_sandbox_maps_to_real_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    abs_target = str(tmp_path / "sub" / "index.html")
+
+    resolved, err = resolve_safe_path(abs_target)
+
+    assert err is None
+    # Must resolve to the file itself, not a re-rooted duplicate underneath base.
+    assert resolved == os.path.realpath(abs_target)
+    assert "home" not in os.path.relpath(resolved, str(tmp_path)).split(os.sep)
+
+
+def test_resolve_relative_path_resolves_under_sandbox(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+
+    resolved, err = resolve_safe_path("sub/index.html")
+
+    assert err is None
+    assert resolved == os.path.realpath(str(tmp_path / "sub" / "index.html"))
+
+
+def test_resolve_absolute_path_outside_sandbox_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path / "proj"))
+    (tmp_path / "proj").mkdir()
+
+    resolved, err = resolve_safe_path(str(tmp_path / "elsewhere" / "secret.txt"))
+
+    assert resolved is None
+    assert err is not None and "outside sandbox" in err
 
 
 def test_file_read_grant_allows_same_file_different_range(tmp_path, monkeypatch):

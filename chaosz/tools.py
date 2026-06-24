@@ -239,13 +239,19 @@ def resolve_safe_path(rel_path: str) -> tuple[str | None, str | None]:
 
     # Expand user tilde (~) but if it resolves outside sandbox, it will be caught below
     expanded_path = os.path.expanduser(rel_path)
-    
-    # Treat absolute paths as relative to sandbox base to prevent hijacking
-    if os.path.isabs(expanded_path):
-        expanded_path = expanded_path.lstrip(os.sep)
 
     base = os.path.realpath(state.workspace.working_dir)
-    candidate = os.path.realpath(os.path.join(base, expanded_path))
+
+    # Absolute paths are resolved as-is so a path already inside the sandbox
+    # (e.g. the working dir's own absolute path, which is what models naturally
+    # produce) maps to the real file — matching shell_exec, which is not
+    # re-rooted. Relative paths resolve under the sandbox base. Either way the
+    # containment check below rejects anything outside the sandbox, instead of
+    # silently re-rooting it to a phantom location.
+    if os.path.isabs(expanded_path):
+        candidate = os.path.realpath(expanded_path)
+    else:
+        candidate = os.path.realpath(os.path.join(base, expanded_path))
 
     # Security check: the resolved path MUST be within the base directory.
     # Use trailing-sep check to prevent prefix collisions (e.g. /proj vs /proj-secret).
