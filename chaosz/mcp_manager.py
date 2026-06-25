@@ -6,10 +6,14 @@ All public functions are fully synchronous and safe to call from any thread.
 """
 
 import asyncio
+import json
 import os
+import queue
 import shlex
+import subprocess
 import threading
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -35,6 +39,82 @@ class McpServerConnection:
 _connections: dict[str, McpServerConnection] = {}
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_lock = threading.Lock()
+
+
+class JsonLineStdioSession:
+    """Small JSON-RPC-over-stdio client for simple local MCP servers.
+
+    This is used only when a server config opts into client="jsonrpc_stdio".
+    It avoids asyncio subprocess handling during Chaosz's background startup
+    thread while preserving the MCP tool/prompt wire format Chaosz needs.
+    """
+
+    def __init__(self, command: str) -> None:
+        parts = shlex.split(command)
+        self._next_id = 1
+        self._lock = threading.Lock()
+        self._responses: queue.Queue[dict] = queue.Queue()
+        self._proc = subprocess.Popen(
+            parts,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        self._reader = threading.Thread(target=self._read_stdout, daemon=True, name="mcp-jsonrpc-reader")
+        self._reader.start()
+
+    def _read_stdout(self) -> None:
+        if self._proc.stdout is None:
+            return
+        for line in self._proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                self._responses.put(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    def request(self, method: str, params: dict | None = None, timeout: float = 15.0) -> dict:
+        if self._proc.stdin is None:
+            raise RuntimeError("MCP subprocess stdin is closed")
+        with self._lock:
+            message_id = self._next_id
+            self._next_id += 1
+            payload = {"jsonrpc": "2.0", "id": message_id, "method": method}
+            if params is not None:
+                payload["params"] = params
+            self._proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+            self._proc.stdin.flush()
+
+            while True:
+                response = self._responses.get(timeout=timeout)
+                if response.get("id") != message_id:
+                    continue
+                if "error" in response:
+                    error = response["error"]
+                    raise RuntimeError(error.get("message", str(error)))
+                return response.get("result", {})
+
+    async def call_tool(self, name: str, arguments: dict | None = None):
+        result = self.request("tools/call", {"name": name, "arguments": arguments or {}}, 30.0)
+        content = []
+        for block in result.get("content", []):
+            content.append(SimpleNamespace(**block))
+        return SimpleNamespace(content=content, isError=result.get("isError", False))
+
+    def close(self) -> None:
+        try:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self._proc.terminate()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +160,58 @@ def _mcp_tool_to_openai_schema(tool, server_name: str) -> dict:
             "parameters": input_schema,
         },
     }
+
+
+def _jsonrpc_tool_to_openai_schema(tool: dict, server_name: str) -> dict:
+    input_schema = tool.get("inputSchema") or {"type": "object", "properties": {}}
+    return {
+        "type": "function",
+        "function": {
+            "name": f"mcp_{server_name}__{tool.get('name')}",
+            "description": f"[MCP:{server_name}] {tool.get('description') or tool.get('name')}",
+            "parameters": input_schema,
+        },
+    }
+
+
+def _connect_jsonrpc_stdio(name: str, cfg: dict) -> McpServerConnection:
+    conn = McpServerConnection(name=name, config=cfg)
+    _connections[name] = conn
+    try:
+        session = JsonLineStdioSession(cfg["command"])
+        session.request(
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "chaosz-cli", "version": "0.9.1"},
+            },
+        )
+        tools_resp = session.request("tools/list")
+        prompts_resp = session.request("prompts/list")
+        prompts = []
+        for prompt in prompts_resp.get("prompts", []):
+            try:
+                prompt_resp = session.request(
+                    "prompts/get",
+                    {"name": prompt.get("name"), "arguments": {}},
+                    timeout=10.0,
+                )
+                for msg in prompt_resp.get("messages", []):
+                    content = msg.get("content") or {}
+                    text = content.get("text")
+                    if text:
+                        prompts.append(text.strip())
+            except Exception:
+                pass
+        conn.session = session
+        conn.tools = [_jsonrpc_tool_to_openai_schema(t, name) for t in tools_resp.get("tools", [])]
+        conn.prompts = prompts
+        conn.connected = True
+    except Exception as exc:
+        conn.error = str(exc)
+        conn.connected = False
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +293,9 @@ def connect_server(name: str, cfg: dict) -> McpServerConnection:
     Safe to call from any thread. Stores the connection in _connections.
     Returns the McpServerConnection — check .connected and .error.
     """
+    if cfg.get("client") == "jsonrpc_stdio":
+        return _connect_jsonrpc_stdio(name, cfg)
+
     loop = _get_loop()
     conn = McpServerConnection(name=name, config=cfg)
     _connections[name] = conn
@@ -195,6 +330,12 @@ def disconnect_server(name: str) -> None:
     conn = _connections.pop(name, None)
     if conn is None or not conn.connected:
         return
+    if hasattr(conn.session, "close"):
+        try:
+            conn.session.close()
+        except Exception:
+            pass
+        return
     loop = _get_loop()
 
     async def _do() -> None:
@@ -215,6 +356,12 @@ def disconnect_all() -> None:
 
     async def _do() -> None:
         for conn in list(_connections.values()):
+            if hasattr(conn.session, "close"):
+                try:
+                    conn.session.close()
+                except Exception:
+                    pass
+                continue
             if conn.connected:
                 await _disconnect_conn_async(conn)
 
@@ -235,6 +382,23 @@ def call_tool(server_name: str, raw_tool_name: str, args: dict) -> tuple[str, st
     conn = _connections.get(server_name)
     if not conn or not conn.connected or conn.session is None:
         return "error", f"MCP server '{server_name}' is not connected."
+
+    if isinstance(conn.session, JsonLineStdioSession):
+        try:
+            result = conn.session.request(
+                "tools/call",
+                {"name": raw_tool_name, "arguments": args},
+                timeout=30.0,
+            )
+            parts = []
+            for block in result.get("content", []):
+                if "text" in block:
+                    parts.append(block["text"])
+                elif "data" in block:
+                    parts.append(f"[binary data, {len(block['data'])} bytes]")
+            return "ok", "\n".join(parts) if parts else "(empty result)"
+        except Exception as exc:
+            return "error", f"MCP tool call failed: {exc}"
 
     loop = _get_loop()
 
