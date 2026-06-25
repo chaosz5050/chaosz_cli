@@ -221,6 +221,7 @@ class ChaoszApp(App):
     _process_permission_response = app_input_modes.process_permission_response
     _show_shell_permission_prompt = app_input_modes.show_shell_permission_prompt
     _process_shell_permission_response = app_input_modes.process_shell_permission_response
+    _select_menu_by_number = app_input_modes.select_menu_by_number
     _prompt_sudo_password = app_input_modes.prompt_sudo_password
     _handle_password_input = app_input_modes.handle_password_input
     _prompt_api_key = app_input_modes.prompt_api_key

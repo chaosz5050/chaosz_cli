@@ -547,6 +547,64 @@ def _handle_mode_plan_approve(app) -> bool:
     return True
 
 
+def select_menu_by_number(app, n: int) -> bool:
+    """Pick the n-th (1-based) option of the active menu and confirm it immediately.
+
+    Mirrors arrow-key navigation + Enter: it sets the menu's index then calls the same
+    confirm function Enter uses for that mode. Returns True if a selection was made, False
+    if n is out of range or no menu is active (the keypress should then be ignored).
+    """
+    from chaosz.ui.app_rendering import _PLAN_APPROVAL_OPTIONS, TEMPERATURE_OPTIONS
+
+    idx = n - 1
+    if idx < 0:
+        return False
+
+    # Permission prompts can be active during an AI turn, independent of state.ui.mode.
+    if state.permissions.awaiting or state.permissions.awaiting_shell:
+        if idx >= state.permissions.approval_option_count:
+            return False
+        state.permissions.approval_index = idx
+        if state.permissions.awaiting_shell:
+            process_shell_permission_response(app, "")
+        else:
+            process_permission_response(app, "")
+        return True
+
+    mode = state.ui.mode
+    if mode in ("MODEL_SELECT", "MODEL_ADD_SELECT"):
+        if idx >= len(state.provider.menu_providers):
+            return False
+        state.provider.menu_index = idx
+        return _handle_mode_dispatch(app, "")
+    if mode == "MODEL_SELECT_VERSION":
+        if idx >= len(state.provider.available_models):
+            return False
+        state.provider.available_models_index = idx
+        return _handle_mode_model_select_version(app)
+    if mode == "TEMP_SELECT":
+        if idx >= len(TEMPERATURE_OPTIONS):
+            return False
+        state.provider.temp_menu_index = idx
+        return _handle_mode_temp_select(app)
+    if mode == "SKILL_MENU":
+        if idx >= len(state.ui.skill_menu_names) + 1:  # +1 for the "none" entry
+            return False
+        state.ui.skill_menu_index = idx
+        return _handle_mode_skill_menu(app)
+    if mode == "THEME_SELECT":
+        if idx >= len(state.ui.theme_menu_names):
+            return False
+        state.ui.theme_menu_index = idx
+        return _handle_mode_theme_select(app)
+    if mode == "PLAN_APPROVE":
+        if idx >= len(_PLAN_APPROVAL_OPTIONS):
+            return False
+        state.ui.plan_approval_index = idx
+        return _handle_mode_plan_approve(app)
+    return False
+
+
 def on_input_submitted(app, event: Input.Submitted) -> None:
     user_input = event.value.strip()
     event.input.clear()

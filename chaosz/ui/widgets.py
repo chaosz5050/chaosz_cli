@@ -9,11 +9,20 @@ from chaosz.state import state
 class HistoryInput(Input):
     """Input that intercepts ↑/↓ before the widget can act on them."""
 
+    _MENU_MODES = ("MODEL_SELECT", "MODEL_ADD_SELECT", "MODEL_SELECT_VERSION", "TEMP_SELECT", "SKILL_MENU", "THEME_SELECT", "PLAN_APPROVE")
+
     def on_key(self, event: Key) -> None:
+        # Number shortcuts: 1-9 directly pick that menu option (same as arrow + Enter).
+        if (state.permissions.awaiting or state.permissions.awaiting_shell
+                or state.ui.mode in self._MENU_MODES):
+            if event.key in "123456789" and len(event.key) == 1:
+                event.prevent_default()
+                self.app._select_menu_by_number(int(event.key))
+                return
         if state.permissions.awaiting or state.permissions.awaiting_shell:
             event.prevent_default()
             return
-        if state.ui.mode in ("MODEL_SELECT", "MODEL_ADD_SELECT", "MODEL_SELECT_VERSION", "TEMP_SELECT", "SKILL_MENU", "THEME_SELECT", "PLAN_APPROVE"):
+        if state.ui.mode in self._MENU_MODES:
             if event.key == "up":
                 event.prevent_default()
                 if state.ui.mode == "MODEL_SELECT_VERSION":

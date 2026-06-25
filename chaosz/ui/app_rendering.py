@@ -187,14 +187,26 @@ def write_reasoning_block(app, text: str) -> None:
     end_reasoning_block(app)
 
 
+# Number-shortcut prefix for menu rows. Rows are labelled "1.".."9." (and "10." etc.
+# for display), but only keys 1-9 trigger direct selection. Width is fixed so rows stay
+# aligned whether the number is one or two digits.
+_NUM_PREFIX_WIDTH = 4  # len(" 1. ")
+
+
+def _num_prefix(i: int) -> str:
+    """Return the aligned number prefix for the i-th (0-based) menu row."""
+    return f"{i + 1:>2}. "
+
+
 def _build_menu_text(providers, active, names, bar_width, max_name) -> Text:
     """Build the full menu as a single multi-line Text for the #model-menu Static widget."""
     t = get_theme()
     text = Text()
     title = "  SELECT PROVIDER" if state.ui.mode == "MODEL_SELECT" else "  ADD PROVIDER"
     text.append(title, style=f"bold {t.accent}")
-    text.append("   ↑/↓ navigate   Enter confirm   Esc cancel\n", style="dim")
-    text.append("    " + "─" * bar_width + "\n", style=f"dim {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    w = bar_width + _NUM_PREFIX_WIDTH
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
     for i, name in enumerate(names):
         suffix = ""
         if state.ui.mode == "MODEL_SELECT":
@@ -211,7 +223,7 @@ def _build_menu_text(providers, active, names, bar_width, max_name) -> Text:
                 suffix = " (configured)"
             bar_text = f"{name:<{max_name}}  {model_label}{suffix}"
 
-        bar_text = bar_text.ljust(bar_width)[:bar_width]
+        bar_text = (_num_prefix(i) + bar_text).ljust(w)[:w]
         if i == state.provider.menu_index:
             text.append("  ▶ ", style=f"bold {t.accent}")
             text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -219,7 +231,7 @@ def _build_menu_text(providers, active, names, bar_width, max_name) -> Text:
             text.append("    ")
             text.append(bar_text, style="dim white")
         text.append("\n")
-    text.append("    " + "─" * bar_width, style=f"dim {t.accent}")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
     return text
 
 
@@ -329,12 +341,13 @@ def _build_version_menu_text(models, active_model, bar_width) -> Text:
     t = get_theme()
     text = Text()
     text.append("  SELECT MODEL VERSION", style=f"bold {t.accent}")
-    text.append("   ↑/↓ navigate   Enter confirm   Esc cancel\n", style="dim")
-    text.append("    " + "─" * bar_width + "\n", style=f"dim {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    w = bar_width + _NUM_PREFIX_WIDTH
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
     for i, name in enumerate(models):
         is_sentinel = (name == KEEP_CURRENT_SENTINEL)
         if is_sentinel:
-            bar_text = name.ljust(bar_width)[:bar_width]
+            bar_text = (_num_prefix(i) + name).ljust(w)[:w]
             if i == state.provider.available_models_index:
                 text.append("  ▶ ", style=f"bold {t.accent}")
                 text.append(bar_text, style=f"bold {t.accent} on {t.menu_highlight}")
@@ -343,7 +356,7 @@ def _build_version_menu_text(models, active_model, bar_width) -> Text:
                 text.append(bar_text, style=f"dim {t.accent}")
         else:
             suffix = " (active)" if name == active_model else ""
-            bar_text = f"{name}{suffix}".ljust(bar_width)[:bar_width]
+            bar_text = (_num_prefix(i) + f"{name}{suffix}").ljust(w)[:w]
             if i == state.provider.available_models_index:
                 text.append("  ▶ ", style=f"bold {t.accent}")
                 text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -351,7 +364,7 @@ def _build_version_menu_text(models, active_model, bar_width) -> Text:
                 text.append("    ")
                 text.append(bar_text, style="dim white")
         text.append("\n")
-    text.append("    " + "─" * bar_width, style=f"dim {t.accent}")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
     return text
 
 
@@ -400,7 +413,7 @@ def _build_two_column_menu_text(models, active_model, pre_selected_model, left_c
 
     right_header = "  SELECT TEMPERATURE"
     right_sep = "    " + "─" * 28
-    right_hint = "   ↑/↓ navigate   Enter confirm"
+    right_hint = "   ↑/↓ or 1-9 select   Enter confirm"
 
     # Header line
     text.append(header_left.ljust(left_col_width + 4), style=f"bold {t.accent}")
@@ -448,7 +461,7 @@ def _build_two_column_menu_text(models, active_model, pre_selected_model, left_c
         # Right column
         if row < len(right_rows):
             i, temp_val, temp_label = right_rows[row]
-            right_text = f"{temp_val:.2f}  {temp_label}"
+            right_text = f"{_num_prefix(i)}{temp_val:.2f}  {temp_label}"
             if i == state.provider.temp_menu_index:
                 text.append("  ▶ ", style=f"bold {t.accent}")
                 text.append(right_text, style=f"bold white on {t.menu_highlight}")
@@ -503,12 +516,13 @@ def _build_skill_menu_text(names: list[str], active_skill: str | None) -> Text:
     bar_width = max_len + len(" (active)") + 2
     text = Text()
     text.append("  SELECT SKILL", style=f"bold {t.accent}")
-    text.append("   ↑/↓ navigate   Enter confirm   Esc cancel\n", style="dim")
-    text.append("    " + "─" * bar_width + "\n", style=f"dim {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    w = bar_width + _NUM_PREFIX_WIDTH
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
     for i, name in enumerate(all_entries):
         is_active = (name == "none" and not active_skill) or (name == active_skill)
         suffix = " (active)" if is_active else ""
-        bar_text = f"{name}{suffix}".ljust(bar_width)[:bar_width]
+        bar_text = (_num_prefix(i) + f"{name}{suffix}").ljust(w)[:w]
         if i == state.ui.skill_menu_index:
             text.append("  ▶ ", style=f"bold {t.accent}")
             text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -516,7 +530,7 @@ def _build_skill_menu_text(names: list[str], active_skill: str | None) -> Text:
             text.append("    ")
             text.append(bar_text, style="dim white")
         text.append("\n")
-    text.append("    " + "─" * bar_width, style=f"dim {t.accent}")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
     return text
 
 
@@ -555,11 +569,12 @@ def _build_theme_menu_text(names: list[str], active_name: str) -> Text:
     bar_width = max_len + len(" (active)") + 2
     text = Text()
     text.append("  SELECT THEME", style=f"bold {t.accent}")
-    text.append("   ↑/↓ navigate   Enter confirm   Esc cancel\n", style="dim")
-    text.append("    " + "─" * bar_width + "\n", style=f"dim {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    w = bar_width + _NUM_PREFIX_WIDTH
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
     for i, name in enumerate(names):
         suffix = " (active)" if name == active_name else ""
-        bar_text = f"{name}{suffix}".ljust(bar_width)[:bar_width]
+        bar_text = (_num_prefix(i) + f"{name}{suffix}").ljust(w)[:w]
         if i == state.ui.theme_menu_index:
             text.append("  ▶ ", style=f"bold {t.accent}")
             text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -567,7 +582,7 @@ def _build_theme_menu_text(names: list[str], active_name: str) -> Text:
             text.append("    ")
             text.append(bar_text, style="dim white")
         text.append("\n")
-    text.append("    " + "─" * bar_width, style=f"dim {t.accent}")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
     return text
 
 
@@ -597,7 +612,7 @@ def render_theme_menu(app) -> None:
     app.query_one("#input-label").styles.display = "none"
     app.query_one("#user-input").styles.display = "none"
     app.query_one("#user-input").focus()
-    set_status(app, "↑/↓ navigate   Enter confirm   Esc cancel")
+    set_status(app, "↑/↓ or 1-9 select   Enter confirm   Esc cancel")
 
 
 def navigate_theme_menu(app, direction: int) -> None:
@@ -641,7 +656,7 @@ def _build_permission_text(options: list) -> Text:
     text = Text()
     text.append("  ────────────────────────────────────────\n", style=f"dim {t.accent}")
     for i, (label, desc) in enumerate(options):
-        bar_text = f"{label:<16} {desc}"
+        bar_text = f"{_num_prefix(i)}{label:<16} {desc}"
         if i == state.permissions.approval_index:
             text.append("  ▶ ", style=f"bold {t.accent}")
             text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -663,7 +678,7 @@ def show_permission_display(app, options: list, status_msg: str) -> None:
     t = get_theme()
     app.query_one("#status-bar", Static).update(
         f"[bold {t.accent}]{status_msg}[/]"
-        "  [dim]↑/↓ navigate   Enter confirm[/dim]"
+        "  [dim]↑/↓ or 1-9 select   Enter confirm[/dim]"
     )
     app.query_one("#user-input").focus()
 
@@ -698,7 +713,7 @@ def _build_plan_approval_text() -> Text:
     text.append("  ────────────────────────────────────────\n", style=f"dim {t.accent}")
     for i, opt in enumerate(_PLAN_APPROVAL_OPTIONS):
         desc = _PLAN_APPROVAL_DESCRIPTIONS[opt]
-        bar_text = f"{opt:<10} {desc}"
+        bar_text = f"{_num_prefix(i)}{opt:<10} {desc}"
         if i == state.ui.plan_approval_index:
             text.append("  ▶ ", style=f"bold {t.accent}")
             text.append(bar_text, style=f"bold white on {t.menu_highlight}")
@@ -717,7 +732,7 @@ def show_plan_approval_display(app) -> None:
     t = get_theme()
     app.query_one("#status-bar", Static).update(
         f"[bold {t.accent}]PLAN APPROVAL[/]"
-        "  [dim]↑/↓ navigate   Enter confirm   Esc reject[/dim]"
+        "  [dim]↑/↓ or 1-9 select   Enter confirm   Esc reject[/dim]"
     )
 
 
