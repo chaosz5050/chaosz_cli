@@ -62,6 +62,10 @@ class PermissionsState:
         self.sudo_password: str | None = None
         self.approval_index: int = 0
         self.approval_option_count: int = 3
+        # Permission level: "strict" (prompt for everything, default),
+        # "standard" (auto-run safe ops, prompt dangerous), or "auto" (run all
+        # but catastrophic). Loaded from config on startup.
+        self.level: str = "strict"
 
 
 class UiState:
@@ -83,6 +87,8 @@ class UiState:
         self.plan_goal: str = ""              # original user request that triggered the plan
         self.skill_menu_names: list[str] = []
         self.skill_menu_index: int = 0
+        self.permission_menu_names: list[str] = []
+        self.permission_menu_index: int = 0
         self.theme_menu_names: list[str] = []
         self.theme_menu_index: int = 0
         self.plan_approval_index: int = 0

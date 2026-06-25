@@ -10,7 +10,10 @@ from rich.text import Text
 from chaosz.config import build_system_prompt, process_memory_tags, CHAOSZ_DIR
 from chaosz.shell import (
     build_shell_session_grants,
+    decide_file_op,
+    decide_shell,
     is_always_prompt_command,
+    is_catastrophic_command,
     is_command_allowed_by_session,
     tool_shell_exec,
 )
@@ -559,7 +562,8 @@ def run_ai_turn(app) -> None:
                                 {"op": fname, "path": path_display, "status": log_status, "detail": "duplicate-skipped"}
                             )
                         else:
-                            if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed):
+                            if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed) \
+                                    or decide_file_op(fname, state.permissions.level) == "allow":
                                 log_status, result_content = executor(tc_args)
                                 if read_key:
                                     seen_file_reads[read_key] = _fingerprint_file(read_key[0])
@@ -596,9 +600,13 @@ def run_ai_turn(app) -> None:
                         if is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
                             # Execute without prompting
                             log_status, result_content = tool_shell_exec(tc_args)
+                        elif decide_shell(command, state.permissions.level) == "allow":
+                            # Permission level auto-approves this command
+                            log_status, result_content = tool_shell_exec(tc_args)
                         else:
-                            # Determine if always-prompt command
-                            always_prompt = is_always_prompt_command(command)
+                            # Determine if always-prompt command (catastrophic also forces the
+                            # 2-option Yes/No menu — never blanket-approvable for the session)
+                            always_prompt = is_always_prompt_command(command) or is_catastrophic_command(command)
 
                             _permission_event.clear()
                             state.permissions.granted = False
@@ -658,7 +666,8 @@ def run_ai_turn(app) -> None:
                         summary = _build_op_summary(fname, tc_args)
                         path_display = tc_args.get("path") or tc_args.get("old_path") or tc_args.get("filename") or tc_args.get("file", "?")
 
-                        if fname in state.permissions.file_session_allowed:
+                        if fname in state.permissions.file_session_allowed \
+                                or decide_file_op(fname, state.permissions.level) == "allow":
                             log_status, result_content = executor(tc_args)
                             app.call_from_thread(
                                 app._write, "",

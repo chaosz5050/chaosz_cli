@@ -1,3 +1,5 @@
+import os
+
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -12,6 +14,17 @@ from chaosz.ui import app_ai_turn, app_compaction, app_compose_turn, app_input_m
 from chaosz.ui.plasma import ReflectingAnimation
 from chaosz.ui.themes import get_theme
 from chaosz.ui.widgets import HistoryInput
+
+
+# Directory the app was launched from, captured at import so it stays fixed even if
+# the working directory changes later. Shown on the right of the status bar.
+_START_CWD = os.getcwd()
+
+
+def _display_cwd() -> str:
+    home = os.path.expanduser("~")
+    path = "~" + _START_CWD[len(home):] if _START_CWD.startswith(home) else _START_CWD
+    return f"started in {path}"
 
 
 def _build_css(t) -> str:
@@ -59,11 +72,24 @@ def _build_css(t) -> str:
         background: {t.bg_main};
     }}
 
-    #status-bar {{
+    #status-bar-container {{
         height: 1;
         background: {t.bg_statusbar};
+    }}
+
+    #status-bar {{
+        width: 1fr;
         color: {t.text_dim};
         padding: 0 1;
+        background: transparent;
+    }}
+
+    #cwd-bar {{
+        width: auto;
+        content-align: right middle;
+        color: {t.text_dim};
+        padding: 0 1;
+        background: transparent;
     }}
 
     #input-row {{
@@ -195,6 +221,8 @@ class ChaoszApp(App):
     _navigate_temp_menu = app_rendering.navigate_temp_menu
     _render_skill_menu = app_rendering.render_skill_menu
     _navigate_skill_menu = app_rendering.navigate_skill_menu
+    _render_permission_level_menu = app_rendering.render_permission_level_menu
+    _navigate_permission_level_menu = app_rendering.navigate_permission_level_menu
     _render_theme_menu = app_rendering.render_theme_menu
     _navigate_theme_menu = app_rendering.navigate_theme_menu
     _render_plan_approval_menu = app_rendering.render_plan_approval_menu
@@ -256,7 +284,9 @@ class ChaoszApp(App):
         yield Static(ASCII_LOGO + f"\n\n [{_tc}]Welcome to Chaosz CLI. /help for commands.[/]", id="header")
         yield VerticalScroll(id="chat-scroll")
         with Vertical(id="bottom-panel"):
-            yield Static("▶ Ready", id="status-bar")
+            with Horizontal(id="status-bar-container"):
+                yield Static("▶ Ready", id="status-bar")
+                yield Static(_display_cwd(), id="cwd-bar")
             yield Horizontal(
                 ReflectingAnimation(id="plasma-animation"),
                 Static("", id="plan-approval-display"),
@@ -270,8 +300,9 @@ class ChaoszApp(App):
                 yield Static(f"v{__version__}", id="version-bar")
 
     def on_mount(self) -> None:
-        from chaosz.config import load_show_header
+        from chaosz.config import load_show_header, load_permission_level
         self.query_one("#header").display = load_show_header()
+        state.permissions.level = load_permission_level()
         self._update_footer()
         self.query_one("#user-input", HistoryInput).focus()
         providers, active = load_providers()
@@ -325,7 +356,11 @@ class ChaoszApp(App):
 
         try: _s(self.query_one("#bottom-panel"), background=t.bg_main)
         except Exception: pass
-        try: _s(self.query_one("#status-bar"), background=t.bg_statusbar, color=t.text_dim)
+        try: _s(self.query_one("#status-bar-container"), background=t.bg_statusbar)
+        except Exception: pass
+        try: _s(self.query_one("#status-bar"), color=t.text_dim)
+        except Exception: pass
+        try: _s(self.query_one("#cwd-bar"), color=t.text_dim)
         except Exception: pass
         try: _s(self.query_one("#input-row"), background=t.border)
         except Exception: pass
@@ -444,6 +479,12 @@ class ChaoszApp(App):
                 self._set_input_label("You: ")
                 self._set_status("Ready")
                 self._write("", Text("Skill selection cancelled.", style="dim"))
+            elif state.ui.mode == "PERMISSIONS_SELECT":
+                state.ui.mode = "CHAT"
+                self.query("#permissions-menu").remove()
+                self._set_input_label("You: ")
+                self._set_status("Ready")
+                self._write("", Text("Permission level unchanged.", style="dim"))
             elif state.ui.mode == "THEME_SELECT":
                 state.ui.mode = "CHAT"
                 self.query("#theme-menu").remove()

@@ -150,6 +150,123 @@ def is_always_prompt_command(command: str) -> bool:
     return False
 
 
+PERMISSION_LEVELS = ("strict", "standard", "auto")
+
+# Targets that must never be recursively force-removed.
+_CATASTROPHIC_RM_TARGETS = {
+    "/", "/*", "~", "~/", "$HOME", "$HOME/", ".", "./", "..", "../", "*", "./*", "../*",
+    "/etc", "/usr", "/var", "/bin", "/sbin", "/boot", "/lib", "/lib64",
+    "/home", "/dev", "/sys", "/proc", "/root", "/opt",
+}
+
+# Fork bomb, whitespace tolerant:  :(){ :|:& };:
+_FORKBOMB_RE = re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:")
+# Redirection straight onto a raw block device, e.g.  > /dev/sda
+_DEV_REDIRECT_RE = re.compile(r">\s*/dev/(sd|nvme|hd|mmcblk|disk|vd)", re.IGNORECASE)
+
+
+def _is_catastrophic_segment(segment: str) -> bool:
+    seg = segment.strip()
+    if not seg:
+        return False
+    try:
+        words = shlex.split(seg)
+    except ValueError:
+        words = seg.split()
+    if not words:
+        return False
+    cmd = os.path.basename(words[0])
+    args = words[1:]
+
+    if cmd == "rm":
+        short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+        long = [a for a in args if a.startswith("--")]
+        recursive = "r" in short or "R" in short or "--recursive" in long
+        force = "f" in short or "--force" in long
+        if recursive and force:
+            if "--no-preserve-root" in long:
+                return True
+            targets = [a for a in args if not a.startswith("-")]
+            for tgt in targets:
+                if tgt in _CATASTROPHIC_RM_TARGETS or tgt.rstrip("/") in _CATASTROPHIC_RM_TARGETS:
+                    return True
+        return False
+
+    if cmd == "dd":
+        return any(a.startswith("of=/dev/") for a in args)
+
+    if cmd == "mkfs" or cmd.startswith("mkfs."):
+        return True
+
+    if cmd in ("wipefs", "shred"):
+        return any(a.startswith("/dev/") for a in args)
+
+    if cmd in ("chmod", "chown"):
+        short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+        recursive = "R" in short or "--recursive" in args
+        targets = [a for a in args if not a.startswith("-")]
+        return recursive and any(t == "/" for t in targets)
+
+    return False
+
+
+def is_catastrophic_command(command: str) -> bool:
+    """Best-effort detection of irreversible, system-wrecking commands.
+
+    Deterministic safety net (NOT a guarantee): even at the most permissive
+    permission level, things like `rm -rf /`, `rm -rf *`, fork bombs, or writing
+    over a raw block device must never run without an explicit confirmation. Kept
+    intentionally narrow to avoid false positives on ordinary commands.
+    """
+    if _FORKBOMB_RE.search(command):
+        return True
+    if _DEV_REDIRECT_RE.search(command):
+        return True
+    for segment in re.split(r'&&|\|\||;|\|', command):
+        if _is_catastrophic_segment(segment):
+            return True
+    return False
+
+
+def decide_shell(command: str, level: str) -> str:
+    """Decide whether a shell command runs straight away or needs a prompt.
+
+    Returns "allow" (run without asking) or "prompt" (ask the user). Unknown
+    levels fall back to the safest behavior (strict).
+    """
+    if level not in PERMISSION_LEVELS:
+        level = "strict"
+    # sudo always prompts — it needs the password flow regardless of level.
+    if command.strip().startswith("sudo "):
+        return "prompt"
+    if level == "strict":
+        return "prompt"
+    if level == "auto":
+        return "prompt" if is_catastrophic_command(command) else "allow"
+    # standard: only the dangerous/catastrophic stuff still asks.
+    if is_always_prompt_command(command) or is_catastrophic_command(command):
+        return "prompt"
+    return "allow"
+
+
+def decide_file_op(fname: str, level: str) -> str:
+    """Decide whether a destructive file op runs straight away or needs a prompt.
+
+    Returns "allow" or "prompt". File ops are already sandboxed to the working
+    directory (see resolve_safe_path), which bounds the blast radius.
+    """
+    if level not in PERMISSION_LEVELS:
+        level = "strict"
+    if level == "strict":
+        return "prompt"
+    if level == "auto":
+        return "allow"
+    # standard: auto-allow create/edit/read, still ask before delete/rename.
+    if fname in ("file_delete", "file_rename"):
+        return "prompt"
+    return "allow"
+
+
 def _setup_session_logs() -> str:
     """Setup rotating session logs in logs/ directory.
     Returns path to session1.log for this session."""

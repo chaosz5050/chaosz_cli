@@ -11,7 +11,10 @@ from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session, persist_tool_round
 from chaosz.shell import (
     build_shell_session_grants,
+    decide_file_op,
+    decide_shell,
     is_always_prompt_command,
+    is_catastrophic_command,
     is_command_allowed_by_session,
     tool_shell_exec,
 )
@@ -227,7 +230,8 @@ def run_compose_turn(app, _user_input: str) -> None:
                         app.call_from_thread(app._write, "", Text(f"  [search] {path_display}", style="dim cyan"))
                     elif fname == "file_read":
                         path_display = tc_args.get("path", "?")
-                        if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed):
+                        if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed) \
+                                or decide_file_op(fname, state.permissions.level) == "allow":
                             _log_status, result_content = executor(tc_args)
                             app.call_from_thread(app._write, "", Text(f"  [read] {path_display} (session)", style="dim cyan"))
                         else:
@@ -259,8 +263,10 @@ def run_compose_turn(app, _user_input: str) -> None:
 
                         if is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
                             _log_status, result_content = tool_shell_exec(tc_args)
+                        elif decide_shell(command, state.permissions.level) == "allow":
+                            _log_status, result_content = tool_shell_exec(tc_args)
                         else:
-                            always_prompt = is_always_prompt_command(command)
+                            always_prompt = is_always_prompt_command(command) or is_catastrophic_command(command)
                             _permission_event.clear()
                             state.permissions.granted = False
                             state.permissions.awaiting_shell = True
@@ -302,7 +308,8 @@ def run_compose_turn(app, _user_input: str) -> None:
                         summary = _build_op_summary(fname, tc_args)
                         path_display = tc_args.get("path") or tc_args.get("old_path") or tc_args.get("filename") or tc_args.get("file", "?")
 
-                        if fname in state.permissions.file_session_allowed:
+                        if fname in state.permissions.file_session_allowed \
+                                or decide_file_op(fname, state.permissions.level) == "allow":
                             _log_status, result_content = executor(tc_args)
                             app.call_from_thread(
                                 app._write, "",

@@ -12,6 +12,7 @@ from chaosz.config import build_system_prompt, process_memory_tags
 from chaosz.providers import build_api_params, get_client, get_native_ollama_client
 from chaosz.providers import provider_requires_reasoning_echo
 from chaosz.session import append_to_live_session, persist_tool_round
+from chaosz.shell import decide_file_op
 from chaosz.state import _permission_event, state
 from chaosz.stream_adapters import ToolCall, stream as _stream
 from chaosz.tools import (
@@ -246,7 +247,7 @@ def _selected_file_reads_allowed(selections: list[dict]) -> bool:
 
 
 def _request_selected_file_read_permission(app, selections: list[dict]) -> bool:
-    if _selected_file_reads_allowed(selections):
+    if decide_file_op("file_read", state.permissions.level) == "allow" or _selected_file_reads_allowed(selections):
         return True
 
     _permission_event.clear()
@@ -272,7 +273,8 @@ def _request_selected_file_read_permission(app, selections: list[dict]) -> bool:
 
 def _execute_permitted_file_read(app, args: dict) -> tuple[str, str]:
     path_display = args.get("path", "?")
-    if is_file_read_allowed_by_session(args, state.permissions.file_read_session_allowed):
+    if decide_file_op("file_read", state.permissions.level) == "allow" \
+            or is_file_read_allowed_by_session(args, state.permissions.file_read_session_allowed):
         status, content = tool_file_read(args)
         app.call_from_thread(app._write, "", Text(f"  [read] {path_display} (session)", style="dim cyan"))
         return status, content

@@ -9,7 +9,7 @@ from chaosz.state import state
 class HistoryInput(Input):
     """Input that intercepts ↑/↓ before the widget can act on them."""
 
-    _MENU_MODES = ("MODEL_SELECT", "MODEL_ADD_SELECT", "MODEL_SELECT_VERSION", "TEMP_SELECT", "SKILL_MENU", "THEME_SELECT", "PLAN_APPROVE")
+    _MENU_MODES = ("MODEL_SELECT", "MODEL_ADD_SELECT", "MODEL_SELECT_VERSION", "TEMP_SELECT", "SKILL_MENU", "PERMISSIONS_SELECT", "THEME_SELECT", "PLAN_APPROVE")
 
     def on_key(self, event: Key) -> None:
         # Number shortcuts: 1-9 directly pick that menu option (same as arrow + Enter).
@@ -31,6 +31,8 @@ class HistoryInput(Input):
                     self.app._navigate_temp_menu(-1)
                 elif state.ui.mode == "SKILL_MENU":
                     self.app._navigate_skill_menu(-1)
+                elif state.ui.mode == "PERMISSIONS_SELECT":
+                    self.app._navigate_permission_level_menu(-1)
                 elif state.ui.mode == "THEME_SELECT":
                     self.app._navigate_theme_menu(-1)
                 elif state.ui.mode == "PLAN_APPROVE":
@@ -45,6 +47,8 @@ class HistoryInput(Input):
                     self.app._navigate_temp_menu(1)
                 elif state.ui.mode == "SKILL_MENU":
                     self.app._navigate_skill_menu(1)
+                elif state.ui.mode == "PERMISSIONS_SELECT":
+                    self.app._navigate_permission_level_menu(1)
                 elif state.ui.mode == "THEME_SELECT":
                     self.app._navigate_theme_menu(1)
                 elif state.ui.mode == "PLAN_APPROVE":

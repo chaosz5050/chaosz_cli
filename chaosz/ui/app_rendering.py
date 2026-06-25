@@ -71,6 +71,8 @@ def update_footer(app) -> None:
     plan_badge = f" [bold {badge_color}]│ PLAN[/]" if state.ui.plan_mode else ""
     skill_badge = f" [bold {badge_color}]│ {state.reasoning.active_skill}[/]" if state.reasoning.active_skill else ""
     personality_badge = " [dim]│ ✦ persona[/dim]" if state.reasoning.personality else ""
+    _perm_icon = {"strict": "🔒", "standard": "🛡", "auto": "⚡"}.get(state.permissions.level, "🔒")
+    permission_badge = f" [bold {badge_color}]│ {_perm_icon} {state.permissions.level}[/]"
     app.query_one("#info-bar", Static).update(
         f" [bold]Model:[/bold] [{t.accent}]{state.provider.active}[/][dim]/[/dim][{t.accent}]{state.provider.model}[/] │ "
         f"{tokens_str} │ "
@@ -78,6 +80,7 @@ def update_footer(app) -> None:
         f"{plan_badge}"
         f"{skill_badge}"
         f"{personality_badge}"
+        f"{permission_badge}"
         f"  [dim](/help for commands)[/dim]"
     )
 
@@ -559,6 +562,64 @@ def navigate_skill_menu(app, direction: int) -> None:
     state.ui.skill_menu_index = (state.ui.skill_menu_index + direction) % total
     text = _build_skill_menu_text(state.ui.skill_menu_names, state.reasoning.active_skill)
     menus = app.query("#skill-menu")
+    if menus:
+        menus.first().update(text)
+
+
+_PERMISSION_LEVEL_OPTIONS = [
+    ("strict",   "ask before every command and file change"),
+    ("standard", "auto-run safe ops, ask for dangerous ones"),
+    ("auto",     "run all except catastrophic (rm -rf *, …)"),
+]
+
+
+def _build_permission_level_menu_text() -> Text:
+    t = get_theme()
+    names = [n for n, _ in _PERMISSION_LEVEL_OPTIONS]
+    max_name = max(len(n) for n in names)
+    max_desc = max(len(d) for _, d in _PERMISSION_LEVEL_OPTIONS)
+    bar_width = max_name + 2 + len("(active)") + 2 + max_desc + 2
+    w = bar_width + _NUM_PREFIX_WIDTH
+    text = Text()
+    text.append("  SELECT PERMISSION LEVEL", style=f"bold {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
+    for i, (name, desc) in enumerate(_PERMISSION_LEVEL_OPTIONS):
+        suffix = " (active)" if name == state.permissions.level else ""
+        label = f"{name}{suffix}".ljust(max_name + len(" (active)") + 1)
+        bar_text = (_num_prefix(i) + f"{label}  {desc}").ljust(w)[:w]
+        if i == state.ui.permission_menu_index:
+            text.append("  ▶ ", style=f"bold {t.accent}")
+            text.append(bar_text, style=f"bold white on {t.menu_highlight}")
+        else:
+            text.append("    ")
+            text.append(bar_text, style="dim white")
+        text.append("\n")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
+    return text
+
+
+def render_permission_level_menu(app) -> None:
+    names = [n for n, _ in _PERMISSION_LEVEL_OPTIONS]
+    state.ui.permission_menu_names = names
+    if state.permissions.level in names:
+        state.ui.permission_menu_index = names.index(state.permissions.level)
+    else:
+        state.ui.permission_menu_index = 0
+    text = _build_permission_level_menu_text()
+    app.query("#permissions-menu").remove()
+    scroll = app.query_one("#chat-scroll", VerticalScroll)
+    scroll.mount(Static(text, id="permissions-menu"))
+    scroll.scroll_end(animate=False)
+
+
+def navigate_permission_level_menu(app, direction: int) -> None:
+    n = len(state.ui.permission_menu_names)
+    if n == 0:
+        return
+    state.ui.permission_menu_index = (state.ui.permission_menu_index + direction) % n
+    text = _build_permission_level_menu_text()
+    menus = app.query("#permissions-menu")
     if menus:
         menus.first().update(text)
 

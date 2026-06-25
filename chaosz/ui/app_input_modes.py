@@ -466,6 +466,24 @@ def _handle_mode_theme_select(app) -> bool:
     return True
 
 
+def _handle_mode_permission_level_select(app) -> bool:
+    from chaosz.ui.app_rendering import _PERMISSION_LEVEL_OPTIONS
+    from chaosz.config import save_permission_level
+    names = [n for n, _ in _PERMISSION_LEVEL_OPTIONS]
+    idx = state.ui.permission_menu_index
+    if 0 <= idx < len(names):
+        level = names[idx]
+        state.permissions.level = level
+        save_permission_level(level)
+        app._update_footer()
+        app._write("", Text(f"Permission level set to '{level}'.", style="green"))
+    app.query("#permissions-menu").remove()
+    state.ui.mode = "CHAT"
+    app._set_input_label("You: ")
+    app._set_status("Ready")
+    return True
+
+
 def _handle_mode_skill_menu(app) -> bool:
     all_entries = ["none"] + state.ui.skill_menu_names
     idx = state.ui.skill_menu_index
@@ -529,6 +547,8 @@ def _handle_mode_dispatch(app, user_input: str) -> bool:
         return app._handle_mcp_setup_input(user_input)
     if state.ui.mode == "SKILL_MENU":
         return _handle_mode_skill_menu(app)
+    if state.ui.mode == "PERMISSIONS_SELECT":
+        return _handle_mode_permission_level_select(app)
     if state.ui.mode == "THEME_SELECT":
         return _handle_mode_theme_select(app)
     if state.ui.mode == "SKILL_ADD":
@@ -592,6 +612,11 @@ def select_menu_by_number(app, n: int) -> bool:
             return False
         state.ui.skill_menu_index = idx
         return _handle_mode_skill_menu(app)
+    if mode == "PERMISSIONS_SELECT":
+        if idx >= len(state.ui.permission_menu_names):
+            return False
+        state.ui.permission_menu_index = idx
+        return _handle_mode_permission_level_select(app)
     if mode == "THEME_SELECT":
         if idx >= len(state.ui.theme_menu_names):
             return False

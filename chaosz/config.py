@@ -207,6 +207,18 @@ def save_theme(name: str) -> None:
     _write_config_file(data)
 
 
+def load_permission_level() -> str:
+    """Load permission level from config.json. Defaults to 'strict'."""
+    return _read_config_file().get("permission_level", "strict")
+
+
+def save_permission_level(level: str) -> None:
+    """Persist permission level to config.json."""
+    data = _read_config_file()
+    data["permission_level"] = level
+    _write_config_file(data)
+
+
 def load_show_header() -> bool:
     """Load show_header flag from config.json. Defaults to True."""
     return bool(_read_config_file().get("show_header", True))

@@ -28,6 +28,7 @@ def handle_command(app, user_input: str) -> None:
             f"\n[bold {ac}]Available Commands:[/bold {ac}]\n"
             f"  [{c}]/help[/{c}]                       - Display this help message\n"
             f"  [{c}]/theme[/{c}]                      - Pick a color theme\n"
+            f"  [{c}]/permissions[/{c}] [{a}][set <level>][/{a}]    - Set permission level: strict, standard, auto\n"
             f"  [{c}]/model[/{c}] [{a}]list[/{a}]               - Pick provider, then pick model version + temperature\n"
             f"  [{c}]/model[/{c}] [{a}]add[/{a}]                - Interactive provider addition menu\n"
             f"  [{c}]/model[/{c}] [{a}]del[/{a}] [{a}]<provider>[/{a}]       - Remove a provider\n"
@@ -351,6 +352,27 @@ def handle_command(app, user_input: str) -> None:
                 f"  [{c}]/mcp[/{c}] [{a}]enable[/{a}] [{a}]<name>[/{a}]         - Enable and connect a server\n"
                 f"  [{c}]/mcp[/{c}] [{a}]disable[/{a}] [{a}]<name>[/{a}]        - Disable and disconnect a server\n"
             ))
+
+    elif cmd in ("/permissions", "/perms"):
+        from chaosz.shell import PERMISSION_LEVELS
+        from chaosz.config import save_permission_level
+        sub = args[1].lower() if len(args) > 1 else ""
+
+        if sub == "set":
+            if len(args) < 3 or args[2].lower() not in PERMISSION_LEVELS:
+                app._write("", Text(f"Usage: /permissions set <{'|'.join(PERMISSION_LEVELS)}>", style="yellow"))
+                return
+            level = args[2].lower()
+            state.permissions.level = level
+            save_permission_level(level)
+            app._update_footer()
+            app._write("", Text(f"Permission level set to '{level}'.", style="green"))
+        else:
+            # Open the interactive selection menu (default / "view")
+            state.ui.mode = "PERMISSIONS_SELECT"
+            app._set_input_label("[bold cyan] PERMISSIONS: [/bold cyan] ")
+            app._set_status("↑/↓ or 1-9 select   Enter confirm   Esc cancel")
+            app._render_permission_level_menu()
 
     elif cmd == "/skill":
         sub = args[1].lower() if len(args) > 1 else ""
