@@ -19,6 +19,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 
+from chaosz import __version__
+
 
 # ---------------------------------------------------------------------------
 # Module-level singletons
@@ -184,7 +186,7 @@ def _connect_jsonrpc_stdio(name: str, cfg: dict) -> McpServerConnection:
             {
                 "protocolVersion": "2025-11-25",
                 "capabilities": {},
-                "clientInfo": {"name": "chaosz-cli", "version": "0.9.1"},
+                "clientInfo": {"name": "chaosz-cli", "version": __version__},
             },
         )
         tools_resp = session.request("tools/list")
