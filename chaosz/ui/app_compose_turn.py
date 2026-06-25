@@ -16,6 +16,7 @@ from chaosz.shell import (
     is_always_prompt_command,
     is_catastrophic_command,
     is_command_allowed_by_session,
+    record_file_op,
     tool_shell_exec,
 )
 from chaosz.state import _permission_event, state
@@ -228,6 +229,7 @@ def run_compose_turn(app, _user_input: str) -> None:
                         _log_status, result_content = executor(tc_args)
                         path_display = tc_args.get("query", "?")
                         app.call_from_thread(app._write, "", Text(f"  [search] {path_display}", style="dim cyan"))
+                        record_file_op(fname, path_display, _log_status, "")
                     elif fname == "file_read":
                         path_display = tc_args.get("path", "?")
                         if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed) \
@@ -256,6 +258,7 @@ def run_compose_turn(app, _user_input: str) -> None:
 
                             color = "dim cyan" if _log_status == "ok" else ("yellow" if _log_status == "denied" else "red")
                             app.call_from_thread(app._write, "", Text(f"  [read] {path_display} → {result_content[:80]}", style=color))
+                        record_file_op(fname, path_display, _log_status, "")
                     elif fname == "shell_exec":
                         command = tc_args.get("command", "")
                         reason = tc_args.get("reason", "")
@@ -302,6 +305,7 @@ def run_compose_turn(app, _user_input: str) -> None:
                         color = "red" if is_error else "dim cyan"
                         summary = f"  {prefix} ({line_count} lines)"
                         app.call_from_thread(app._write, "", Text(summary, style=color))
+                        record_file_op(fname, command, _log_status, result_content[:100])
                     else:
                         # Destructive file operations: requires user confirmation (or session bypass)
                         diff_text = _build_diff(tc_args) if fname == "file_edit" else None
@@ -338,6 +342,7 @@ def run_compose_turn(app, _user_input: str) -> None:
                                 app._write, "",
                                 Text(f"  [{fname}] {path_display} → {result_content}", style=color),
                             )
+                        record_file_op(fname, path_display, _log_status, str(result_content)[:100])
 
                     tool_result_msgs.append({
                         "role": "tool",

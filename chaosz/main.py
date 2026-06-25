@@ -14,7 +14,7 @@ from chaosz.config import (
 )
 from chaosz.providers import load_providers, sync_runtime_provider_state
 from chaosz.config import CHAOSZ_DIR
-from chaosz.shell import _setup_session_logs
+from chaosz.shell import _setup_session_logs, _setup_audit_log
 from chaosz.session import startup_cleanup, restore_session
 from chaosz.ui.themes import seed_builtin_themes, set_theme
 from chaosz.ui.app import ChaoszApp
@@ -51,6 +51,7 @@ def _reset_ai_turn_log() -> None:
 def main():
     ensure_chaosz_dir()
     state.session.log_path = _setup_session_logs()
+    state.session.audit_log_path = _setup_audit_log()
     _reset_tool_result_log()
     _reset_ai_turn_log()
     state.provider.config = load_config()

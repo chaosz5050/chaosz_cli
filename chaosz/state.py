@@ -13,6 +13,7 @@ class SessionState:
         self.cached_tokens: int = 0
         self.lock = threading.Lock()
         self.log_path: str | None = None
+        self.audit_log_path: str | None = None
 
 
 class ProviderState:

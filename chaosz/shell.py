@@ -335,6 +335,86 @@ def _write_shell_to_log(command: str, exit_code: int, stdout: str, stderr: str) 
         pass  # Silently fail if log writing fails
 
 
+# Per-session audit file size cap. With at most 3 sessions kept, total disk use
+# stays around a few MB. Entries are one line each, so this holds a lot of history.
+AUDIT_LOG_MAX_BYTES = 1_000_000
+
+
+def _setup_audit_log() -> str:
+    """Create a fresh action-audit log for this session, rotating the previous two.
+
+    Cleanup happens here, on app start, because Ctrl-C may not shut the app down
+    cleanly — so we can't rely on an exit hook. Keeps audit1 (current) .. audit3
+    (oldest); audit3 is discarded so no more than 3 sessions are ever stored.
+    Returns the path to this session's audit1.log.
+    """
+    logs_dir = os.path.join(CHAOSZ_DIR, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    a1 = os.path.join(logs_dir, "audit1.log")
+    a2 = os.path.join(logs_dir, "audit2.log")
+    a3 = os.path.join(logs_dir, "audit3.log")
+    try:
+        if os.path.exists(a3):
+            os.remove(a3)
+        if os.path.exists(a2):
+            os.rename(a2, a3)
+        if os.path.exists(a1):
+            os.rename(a1, a2)
+    except OSError:
+        pass
+    try:
+        with open(a1, "w", encoding="utf-8") as f:
+            f.write("=== Chaosz CLI Action Audit Log ===\n")
+            f.write(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("One line per tool action (file ops, shell, MCP, search), tagged with the\n")
+            f.write("permission level in effect — so actions taken with reduced prompting\n")
+            f.write("(standard/auto) can be traced afterwards. Newest session = audit1.log.\n")
+            f.write("===================================\n\n")
+    except OSError:
+        pass
+    return a1
+
+
+def _audit_truncate_if_large(path: str) -> None:
+    """Keep an audit file under AUDIT_LOG_MAX_BYTES by dropping its oldest ~20%."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > AUDIT_LOG_MAX_BYTES:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(lines[int(len(lines) * 0.2):])
+    except OSError:
+        pass
+
+
+def record_file_op(op: str, path: str, status: str, detail: str = "") -> None:
+    """Record a tool action in BOTH the in-memory log (shown by /files) and the
+    on-disk session audit log. Single choke point so the two never drift.
+
+    The audit line includes the active permission level, which is the whole point:
+    it lets you trace what ran with reduced prompting under 'standard' / 'auto'.
+    """
+    state.workspace.file_op_log.append(
+        {"op": op, "path": path, "status": status, "detail": detail}
+    )
+    audit_path = state.session.audit_log_path
+    if not audit_path:
+        return
+    _audit_truncate_if_large(audit_path)
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    level = state.permissions.level
+    safe_path = str(path).replace("\n", " ")
+    safe_detail = re.sub(r"\s+", " ", str(detail)).strip()[:200]
+    line = f"[{ts}] [{level:<8}] {op:<14} status={status:<7} path={safe_path}"
+    if safe_detail:
+        line += f"  detail={safe_detail}"
+    try:
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 def tool_shell_exec(args: dict) -> tuple[str, str]:
     """Execute shell command. Uses state.permissions.sudo_password if set for sudo commands."""
     command = args.get("command", "")

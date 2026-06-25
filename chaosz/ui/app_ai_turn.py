@@ -15,6 +15,7 @@ from chaosz.shell import (
     is_always_prompt_command,
     is_catastrophic_command,
     is_command_allowed_by_session,
+    record_file_op,
     tool_shell_exec,
 )
 from chaosz.state import _permission_event, state
@@ -520,9 +521,7 @@ def run_ai_turn(app) -> None:
                                 Text(f"  [mcp:{server_name}] {raw_tool_name} → {result_content[:80]}", style=color),
                             )
 
-                        state.workspace.file_op_log.append(
-                            {"op": f"mcp:{server_name}", "path": path_display, "status": log_status, "detail": result_content[:100]}
-                        )
+                        record_file_op(f"mcp:{server_name}", path_display, log_status, result_content[:100])
                     elif executor is None:
                         log_status = "error"
                         result_content = f"Error: unknown tool '{fname}'."
@@ -531,9 +530,7 @@ def run_ai_turn(app) -> None:
                         log_status, result_content = executor(tc_args)
                         path_display = tc_args.get("query", "?")
                         app.call_from_thread(app._write, "", Text(f"  [search] {path_display}", style="dim cyan"))
-                        state.workspace.file_op_log.append(
-                            {"op": fname, "path": path_display, "status": log_status, "detail": ""}
-                        )
+                        record_file_op(fname, path_display, log_status, "")
                     elif fname == "file_read":
                         # Avoid exact duplicate reads in a single AI run unless file changed.
                         read_key = _resolve_read_key(tc_args)
@@ -558,9 +555,7 @@ def run_ai_turn(app) -> None:
                             entry_flags.extend(["duplicate-skipped", "synthetic-result"])
                             entry_notes = "Duplicate read guard returned synthetic tool result without disk read."
                             app.call_from_thread(app._write, "", Text(f"  [read-skip] {path_display}", style="dim cyan"))
-                            state.workspace.file_op_log.append(
-                                {"op": fname, "path": path_display, "status": log_status, "detail": "duplicate-skipped"}
-                            )
+                            record_file_op(fname, path_display, log_status, "duplicate-skipped")
                         else:
                             if is_file_read_allowed_by_session(tc_args, state.permissions.file_read_session_allowed) \
                                     or decide_file_op(fname, state.permissions.level) == "allow":
@@ -589,9 +584,7 @@ def run_ai_turn(app) -> None:
 
                                 color = "dim cyan" if log_status == "ok" else ("yellow" if log_status == "denied" else "red")
                                 app.call_from_thread(app._write, "", Text(f"  [read] {path_display} → {result_content[:80]}", style=color))
-                            state.workspace.file_op_log.append(
-                                {"op": fname, "path": path_display, "status": log_status, "detail": ""}
-                            )
+                            record_file_op(fname, path_display, log_status, "")
                     elif fname == "shell_exec":
                         command = tc_args.get("command", "")
                         reason = tc_args.get("reason", "")
@@ -640,14 +633,7 @@ def run_ai_turn(app) -> None:
 
                         # Store output summary
                         full_output = result_content  # store before any truncation
-                        state.workspace.file_op_log.append(
-                            {
-                                "op": fname,
-                                "path": command,
-                                "status": log_status,
-                                "detail": full_output[:100],  # truncated for log
-                            }
-                        )
+                        record_file_op(fname, command, log_status, full_output[:100])
                         # Keep original full output for AI (tool result)
                         result_content = full_output
                         # Compute display properties
@@ -694,14 +680,7 @@ def run_ai_turn(app) -> None:
                                 Text(f"  [{fname}] {path_display} → {result_content}", style=color),
                             )
 
-                        state.workspace.file_op_log.append(
-                            {
-                                "op": fname,
-                                "path": path_display,
-                                "status": log_status,
-                                "detail": result_content,
-                            }
-                        )
+                        record_file_op(fname, path_display, log_status, result_content)
 
                     # Repeated-error guard: if the same tool+path keeps failing, stop the loop
                     if log_status == "error":
