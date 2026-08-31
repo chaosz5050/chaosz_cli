@@ -111,6 +111,26 @@ def _estimate_api_msgs_chars(messages: list[dict]) -> int:
     return total
 
 
+def _file_edit_recovery_message(path: str) -> str:
+    """Give local models a concrete next action after an exact-match edit fails."""
+    return (
+        "\n\nPATCH RECOVERY REQUIRED: Your file_edit search text was not an exact "
+        "contiguous substring of the current file. Do NOT repeat this patch. "
+        f"Your next tool call MUST be file_read for '{path}' (read the relevant "
+        "file contents again). Then make one new file_edit using a 1–3 line, "
+        "contiguous search string copied exactly from that fresh read. Do not "
+        "skip lines between settings or keys."
+    )
+
+
+def _is_file_edit_search_miss(tool_name: str, status: str, result: object) -> bool:
+    return (
+        tool_name == "file_edit"
+        and status == "error"
+        and "Edit failed: Found 0 matches for SEARCH block." in str(result)
+    )
+
+
 def _write_ai_turn_iteration_log_entry(
     *,
     loop_index: int,
@@ -184,11 +204,14 @@ def _write_ai_turn_run_outcome_log_entry(
         pass
 
 
-def request_cancel() -> None:
-    """Signal the running AI turn to stop at the next safe checkpoint."""
+def request_cancel() -> bool:
+    """Signal the running AI turn once; return whether this call changed state."""
+    if state.ui.cancel_requested:
+        return False
     state.ui.cancel_requested = True
     state.permissions.granted = False
     _permission_event.set()
+    return True
 
 
 def run_ai_turn(app) -> None:
@@ -205,6 +228,7 @@ def run_ai_turn(app) -> None:
             final_response = ""
             tool_calls_made = False
             post_tool_final_retry_used = False
+            truncation_recovery_used = False
             seen_file_reads: dict[tuple[str, int, int | None], tuple[int, int] | None] = {}
             tool_error_counts: dict[tuple[str, str], int] = {}
             force_break = False
@@ -324,11 +348,22 @@ def run_ai_turn(app) -> None:
 
                 # Output token limit hit — discard partial tool calls and inject recovery hint
                 if finish_reason_seen == "length":
+                    if truncation_recovery_used:
+                        app.call_from_thread(
+                            app._write, "",
+                            Text(
+                                "⚠ Output truncated again — stopping to avoid a retry loop. "
+                                "Start a new turn with a smaller task or raise the output budget.",
+                                style="yellow",
+                            ),
+                        )
+                        break
                     app.call_from_thread(
                         app._write, "",
                         Text("⚠ Output truncated (token limit reached).", style="yellow"),
                     )
                     tool_calls_received = []
+                    truncation_recovery_used = True
                     api_msgs.append({
                         "role": "user",
                         "content": (
@@ -682,6 +717,24 @@ def run_ai_turn(app) -> None:
 
                         record_file_op(fname, path_display, log_status, result_content)
 
+                    # Qwen and other local models occasionally produce a search block made
+                    # from non-adjacent lines.  A fresh read is the only reliable recovery;
+                    # allow it even if the same file was read earlier this turn and make the
+                    # next required action explicit in the tool result.
+                    if _is_file_edit_search_miss(fname, log_status, result_content):
+                        failed_read_key = _resolve_read_key({"path": tc_args.get("path", "")})
+                        if failed_read_key:
+                            failed_path = failed_read_key[0]
+                            for key in list(seen_file_reads):
+                                if key[0] == failed_path:
+                                    del seen_file_reads[key]
+                        result_content = (
+                            (result_content if isinstance(result_content, str) else str(result_content))
+                            + _file_edit_recovery_message(tc_args.get("path", "the file"))
+                        )
+                        entry_flags.append("file-edit-recovery-required")
+                        entry_notes = "Exact-match file edit failed; next read of this file is intentionally not deduplicated."
+
                     # Repeated-error guard: if the same tool+path keeps failing, stop the loop
                     if log_status == "error":
                         err_key = (fname, tc_args.get("path", tc_args.get("command", "")))
@@ -838,6 +891,25 @@ def run_ai_turn(app) -> None:
             else:
                 app.call_from_thread(app._write, "", Text(f"API error: {e}", style="bold red"))
         except Exception as e:
+            from chaosz.stream_adapters import OllamaStreamTimeout
+            if isinstance(e, OllamaStreamTimeout):
+                _write_ai_turn_run_outcome_log_entry(
+                    final_response_present=False,
+                    final_response_length=0,
+                    tool_calls_made=tool_calls_made,
+                    assistant_persisted=False,
+                    fallback_failure_shown=False,
+                    exception_summary=str(e),
+                )
+                app.call_from_thread(
+                    app._write, "",
+                    Text(
+                        "Ollama stopped responding. The turn was cancelled after 120 seconds of no output; "
+                        "try again, or restart Ollama if it remains in Stopping… state.",
+                        style="yellow",
+                    ),
+                )
+                return
             _write_ai_turn_run_outcome_log_entry(
                 final_response_present=False,
                 final_response_length=0,

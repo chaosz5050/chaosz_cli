@@ -463,11 +463,12 @@ class ChaoszApp(App):
         if event.key == "escape":
             if state.ui.is_thinking:
                 from chaosz.ui.app_ai_turn import request_cancel
-                request_cancel()
+                newly_cancelled = request_cancel()
                 state.ui.plan_executing = False
                 state.ui.plan_steps = []
                 state.ui.plan_step_index = 0
-                self._write("", Text("AI turn cancelled.", style="yellow dim"))
+                if newly_cancelled:
+                    self._write("", Text("Cancelling AI turn…", style="yellow dim"))
                 return
             if state.ui.mode == "PERSONALITY_SET":
                 self._confirm_personality()

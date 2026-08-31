@@ -861,13 +861,13 @@ def confirm_model_version_switch(app, model_name: str, temperature: float | None
     providers[active]["model"] = model_name
     if temperature is not None:
         providers[active]["temperature"] = temperature
-    save_providers(providers, active)
-    # Re-query context window for Ollama — it's model-specific
+        providers[active]["temperature_user_override"] = True
+    # Re-query Ollama metadata and apply a conservative runtime profile.  This
+    # refreshes per model while preserving any future explicit user overrides.
     if active == "ollama":
-        from chaosz.ollama_utils import get_model_context_window
-        ctx = get_model_context_window(model_name)
-        providers["ollama"]["context_window"] = ctx
-        save_providers(providers, active)
+        from chaosz.ollama_utils import apply_model_profile
+        apply_model_profile(providers["ollama"], model_name)
+    save_providers(providers, active)
     sync_runtime_provider_state(active, providers)
 
     if temperature is not None:

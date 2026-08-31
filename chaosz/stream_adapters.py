@@ -10,10 +10,22 @@ To add a new provider:
 """
 
 import json
+import queue
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Iterator
 
 from chaosz.state import state
+
+
+# A local model may take a while to load, but a stream that has emitted nothing
+# for this long is almost always a stopped runner or a broken HTTP connection.
+OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS = 120
+
+
+class OllamaStreamTimeout(RuntimeError):
+    """Raised when a native Ollama stream stops making progress."""
 
 
 @dataclass
@@ -116,7 +128,9 @@ def _flush_think_buf(think_buf: str, in_think: bool) -> Iterator[StreamChunk]:
 def _ollama_think_value(model: str, reasoning_enabled: bool):
     """Return the best-effort Ollama think value for one model family."""
     if not reasoning_enabled:
-        return None
+        # None means "let the model decide".  That silently enables thinking
+        # for Qwen, whose template defaults to it, so /reason off was broken.
+        return False
     lower = model.lower()
     if "gpt-oss" in lower:
         return "medium"
@@ -262,6 +276,7 @@ def _iter_gemini(messages: list, tools, model: str) -> Iterator[StreamChunk]:
 
 
 def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
+    from chaosz.ollama_utils import ensure_runtime_context
     from chaosz.providers import get_native_ollama_client, prepare_messages_for_ollama
 
     think_value = _ollama_think_value(model, state.reasoning.enabled)
@@ -272,6 +287,9 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
             messages = list(messages)
             messages[-1] = {**messages[-1], "content": messages[-1]["content"] + "\n<|think|>"}
 
+    # ``num_ctx`` only takes effect when Ollama loads a model.  Release an old
+    # runner with a conflicting context before creating this request.
+    ensure_runtime_context(model, state.provider.max_ctx)
     ollama_client = get_native_ollama_client()
     raw_stream = ollama_client.chat(
         model=model,
@@ -279,8 +297,42 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
         tools=tools,
         stream=True,
         think=think_value,
-        options={"temperature": state.provider.temperature},
+        options={
+            "temperature": state.provider.temperature,
+            "num_ctx": state.provider.max_ctx,
+            "num_predict": state.provider.max_output_tokens,
+        },
     )
+
+    # The native client's iterator can block forever if Ollama loses its runner.
+    # Consume it in a daemon worker so this generator can honour Esc and detect
+    # an idle connection without blocking the UI's AI-turn thread.
+    event_queue: queue.Queue = queue.Queue()
+    stream_done = object()
+
+    def _consume_stream() -> None:
+        try:
+            for raw_chunk in raw_stream:
+                event_queue.put(("chunk", raw_chunk))
+        except Exception as exc:
+            event_queue.put(("error", exc))
+        finally:
+            event_queue.put(("done", stream_done))
+
+    worker = threading.Thread(target=_consume_stream, daemon=True)
+    worker.start()
+
+    def _close_stream_client() -> None:
+        # ollama.Client wraps httpx.Client.  Closing it is the only available
+        # way to interrupt a blocking native stream; keep this best-effort so
+        # test doubles and future client versions remain compatible.
+        transport = getattr(ollama_client, "_client", None)
+        close = getattr(transport, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
     accumulated: dict[int, dict] = {}
     reasoning_buf = ""
@@ -290,7 +342,26 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
     completion_tokens = 0
     finish_reason_out: str | None = None
 
-    for chunk in raw_stream:
+    last_activity = time.monotonic()
+    while True:
+        if state.ui.cancel_requested:
+            _close_stream_client()
+            return
+        try:
+            kind, payload = event_queue.get(timeout=0.25)
+        except queue.Empty:
+            if time.monotonic() - last_activity >= OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS:
+                _close_stream_client()
+                raise OllamaStreamTimeout(
+                    f"Ollama produced no response for {OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS} seconds."
+                )
+            continue
+        if kind == "done":
+            break
+        if kind == "error":
+            raise payload
+        chunk = payload
+        last_activity = time.monotonic()
         msg = chunk.get("message", {})
         thinking = msg.get("thinking", "")
         content = msg.get("content", "")

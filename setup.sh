@@ -96,7 +96,10 @@ if pipx list --short 2>/dev/null | grep -q '^chaosz-cli '; then
     echo "[INSTALLING] Removing existing chaosz-cli install..."
     pipx uninstall chaosz-cli >/dev/null 2>&1 || true
 fi
-pipx install .
+# This project is frequently installed from its working tree during development.
+# Do not reuse a wheel with the same version from pip's cache or the global
+# command can silently run an older source snapshot.
+pipx install --pip-args='--no-cache-dir' .
 
 # 5. Path Verification
 echo "[CHECK] Verifying pipx path..."

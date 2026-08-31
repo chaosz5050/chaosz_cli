@@ -113,6 +113,20 @@ Trust your tool results and remember what you have already done this session. Wh
 After completing any agentic task that involved tool use (file writes, edits, deletes, renames, or shell commands), always end your response with a concise 1–2 sentence summary of what you did. Name the specific files changed and the action taken. Do not just say "done" or "finished". This rule applies even when the task was straightforward."""
 
 
+OLLAMA_FILE_EDIT_POLICY = """\
+\n## Local-model file editing
+
+For file_edit, the `search` value must be an exact, contiguous substring of the
+current file. First use file_read and copy the search text exactly; never omit
+lines between the first and last line of a search block. Keep each edit small
+(normally 1–3 adjacent lines and one logical change). Use file_write to create
+a new file rather than trying to assemble it with file_edit.
+
+If file_edit reports that its search text was not found, do not repeat that
+edit. Your next tool call must be file_read for that same file. Then make one
+new, short edit using text copied exactly from the fresh read."""
+
+
 def _read_config_file(*, require_corrupt_backup: bool = False) -> dict:
     if not os.path.exists(CONFIG_FILE):
         return {}
@@ -323,6 +337,8 @@ def _load_chaosz_md() -> str:
 def build_system_prompt():
     from datetime import datetime
     parts = [DEFAULT_SYSTEM_PROMPT]
+    if state.provider.active == "ollama":
+        parts.append(OLLAMA_FILE_EDIT_POLICY)
     parts.append(f"\nCURRENT DATE: {datetime.now().strftime('%A, %B %d, %Y')}")
     if state.workspace.working_dir:
         parts.append(f"\nCURRENT_WORKING_DIRECTORY: {state.workspace.working_dir}")

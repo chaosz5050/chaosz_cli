@@ -17,8 +17,16 @@ if "openai" not in sys.modules:
     class _DummyAuthError(Exception):
         pass
 
+    class _DummyAPIError(Exception):
+        pass
+
+    class _DummyRateLimitError(Exception):
+        pass
+
     openai_stub.OpenAI = _DummyOpenAI
     openai_stub.AuthenticationError = _DummyAuthError
+    openai_stub.APIError = _DummyAPIError
+    openai_stub.RateLimitError = _DummyRateLimitError
     sys.modules["openai"] = openai_stub
 
 if "ollama" not in sys.modules:
@@ -39,8 +47,14 @@ from chaosz.providers import (
     sync_runtime_provider_state,
     validate_provider_key,
 )
+from chaosz.ollama_utils import derive_model_profile
 from chaosz.state import state
-from chaosz.stream_adapters import _ollama_needs_prompt_think_tag, _ollama_think_value
+from chaosz.stream_adapters import _iter_ollama, _ollama_needs_prompt_think_tag, _ollama_think_value
+from chaosz.ui.app_ai_turn import (
+    _file_edit_recovery_message,
+    _is_file_edit_search_miss,
+    request_cancel,
+)
 
 
 class ProviderAdapterPolicyTests(unittest.TestCase):
@@ -52,6 +66,7 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         state.provider.max_output_tokens = 8192
         state.provider.temperature = 0.7
         state.session.id = "test-session"
+        state.ui.cancel_requested = False
 
     def test_build_api_params_deepseek_streaming_reasoning_disabled(self) -> None:
         params = build_api_params("deepseek", "deepseek-v4-flash", [{"role": "user", "content": "hi"}])
@@ -141,9 +156,53 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
     def test_ollama_think_helpers_choose_safe_defaults(self) -> None:
         self.assertEqual(_ollama_think_value("gpt-oss:20b", True), "medium")
         self.assertIs(_ollama_think_value("qwen3:latest", True), True)
-        self.assertIsNone(_ollama_think_value("qwen3:latest", False))
+        self.assertIs(_ollama_think_value("qwen3:latest", False), False)
         self.assertTrue(_ollama_needs_prompt_think_tag("gemma3:12b"))
         self.assertFalse(_ollama_needs_prompt_think_tag("qwen3:latest"))
+
+    def test_qwen_profile_uses_safe_runtime_limits_not_native_maximum(self) -> None:
+        profile = derive_model_profile(
+            "qwen3.8:27b-q4_K_M",
+            {"general.architecture": "qwen35", "qwen35.context_length": 262144},
+            ["completion", "vision", "tools", "thinking"],
+        )
+
+        self.assertEqual(profile["native_context_window"], 262144)
+        self.assertLessEqual(profile["context_window"], 16384)
+        self.assertEqual(profile["max_output_tokens"], 8192)
+        self.assertTrue(profile["thinking_supported"])
+        self.assertTrue(profile["tools_supported"])
+        self.assertTrue(profile["vision_supported"])
+
+    def test_ollama_request_sends_runtime_limits_and_explicitly_disables_thinking(self) -> None:
+        captured: dict = {}
+
+        class _FakeOllamaClient:
+            def chat(self, **kwargs):
+                captured.update(kwargs)
+                return iter([{"message": {"content": "ok"}, "done_reason": "stop", "done": True}])
+
+        state.provider.active = "ollama"
+        state.provider.model = "qwen3.8:27b-q4_K_M"
+        state.provider.max_ctx = 16384
+        state.provider.max_output_tokens = 8192
+        state.provider.temperature = 0.7
+        state.reasoning.enabled = False
+
+        with (
+            patch("chaosz.providers.get_native_ollama_client", return_value=_FakeOllamaClient()),
+            patch("chaosz.ollama_utils.ensure_runtime_context") as ensure_context,
+        ):
+            list(_iter_ollama([{"role": "user", "content": "hi"}], None, state.provider.model))
+
+        ensure_context.assert_called_once_with("qwen3.8:27b-q4_K_M", 16384)
+        self.assertIs(captured["think"], False)
+        self.assertEqual(captured["options"]["num_ctx"], 16384)
+        self.assertEqual(captured["options"]["num_predict"], 8192)
+
+    def test_cancel_request_is_idempotent(self) -> None:
+        self.assertTrue(request_cancel())
+        self.assertFalse(request_cancel())
 
     def test_validate_provider_key_openai_compat_uses_chat_probe(self) -> None:
         captured: dict = {}
@@ -243,6 +302,17 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertEqual(captured["model"], "gemini-2.5-flash")
         self.assertEqual(captured["contents"], "ping")
         self.assertEqual(captured["config"], {"max_output_tokens": 1})
+
+    def test_file_edit_search_miss_gets_a_read_first_recovery_instruction(self) -> None:
+        result = "Edit failed: Found 0 matches for SEARCH block."
+
+        self.assertTrue(_is_file_edit_search_miss("file_edit", "error", result))
+        self.assertFalse(_is_file_edit_search_miss("file_write", "error", result))
+        self.assertFalse(_is_file_edit_search_miss("file_edit", "ok", result))
+
+        message = _file_edit_recovery_message("pyproject.toml")
+        self.assertIn("file_read for 'pyproject.toml'", message)
+        self.assertIn("Do NOT repeat this patch", message)
 
 
 if __name__ == "__main__":

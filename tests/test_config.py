@@ -263,6 +263,19 @@ def test_build_system_prompt_includes_memory():
     assert "name is Alice" in prompt
 
 
+def test_build_system_prompt_adds_exact_edit_policy_for_ollama():
+    with (
+        patch.object(state.provider, "active", "ollama"),
+        patch.object(state.workspace, "working_dir", ""),
+        patch.object(state.reasoning, "personality", ""),
+        patch.object(state.reasoning, "memory", {cat: [] for cat in cfg.VALID_CATEGORIES}),
+    ):
+        prompt = cfg.build_system_prompt()
+
+    assert "Local-model file editing" in prompt
+    assert "exact, contiguous substring" in prompt
+
+
 def test_default_system_prompt_distinguishes_shell_from_file_sandbox():
     prompt = cfg.DEFAULT_SYSTEM_PROMPT
 

@@ -4,7 +4,7 @@ from rich.text import Text
 
 from chaosz.ollama_utils import (
     get_free_disk_gb,
-    get_model_context_window,
+    apply_model_profile,
     install_ollama,
     is_model_available_online,
     is_ollama_installed,
@@ -164,22 +164,26 @@ def start_ollama_setup(app) -> None:
             _reset_mode()
             return
 
-        # ---- STEP 6: detect context window + save --------------------------
+        # ---- STEP 6: detect capabilities + save safe runtime profile -------
 
-        ctx_window = get_model_context_window(model_name)
         providers, active = load_providers()
-        providers["ollama"] = {
+        ollama_data = {
             "api_key": "ollama",
             "base_url": "http://localhost:11434/v1",
             "model": model_name,
-            "context_window": ctx_window,
             "local": True,
         }
+        profile = apply_model_profile(ollama_data, model_name)
+        providers["ollama"] = ollama_data
         save_providers(providers, active)
 
+        ctx_window = ollama_data["context_window"]
+        native_ctx = profile["native_context_window"]
         ctx_label = f"{ctx_window // 1000}K" if ctx_window >= 1000 else str(ctx_window)
+        native_label = f"{native_ctx // 1000}K" if native_ctx >= 1000 else str(native_ctx)
         _write(
-            f"Ollama ready. Model: {model_name} | Context: {ctx_label} tokens",
+            f"Ollama ready. Model: {model_name} | Runtime context: {ctx_label} "
+            f"(native maximum: {native_label})",
             style="green",
         )
         _write("Switching to Ollama...", style="cyan")

@@ -130,6 +130,18 @@ def sync_runtime_provider_state(
     pdata = providers.get(active_name) or {}
     reg = PROVIDER_REGISTRY.get(active_name, PROVIDER_REGISTRY["deepseek"])
 
+    # Migrate earlier Ollama entries that only stored the advertised context
+    # window.  New selections are profiled in the UI; this keeps existing
+    # installations safe on their next startup as well.
+    if reg.get("local") and pdata.get("model") and not pdata.get("model_profile"):
+        from chaosz.ollama_utils import apply_model_profile
+        apply_model_profile(pdata, pdata["model"])
+        providers[active_name] = pdata
+        try:
+            save_providers(providers, active_name)
+        except OSError:
+            pass
+
     state.provider.active = active_name
     state.provider.model = get_effective_model(active_name, pdata)
     state.provider.max_ctx = pdata.get("context_window", reg.get("context_window", 4096))
