@@ -115,8 +115,13 @@ def compact_conversation(app, auto=False):
         # Replace state.session.messages with compact representation under the lock
         with state.session.lock:
             state.session.messages = [
-                {"role": "user", "content": f"[CONTEXT HANDOFF]\n\n{summary}"},
-                {"role": "assistant", "content": "Understood. Continuing from the summary."},
+                {
+                    "role": "user",
+                    "content": (
+                        f"[CONTEXT HANDOFF]\n\n{summary}\n\n"
+                        "Continue the user's task from this handoff."
+                    ),
+                },
             ]
 
         # Recompute estimate from the now-compact messages so the footer reflects reality
