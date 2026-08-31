@@ -71,11 +71,42 @@ fi
 echo "[INSTALLING] Setting up user directories..."
 CHAOSZ_DIR="$HOME/.config/chaosz"
 LOGS_DIR="$CHAOSZ_DIR/logs"
+SKILLS_DIR="$CHAOSZ_DIR/skills"
+SETUP_SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)/skills"
 
-mkdir -p "$LOGS_DIR"
+mkdir -p "$LOGS_DIR" "$SKILLS_DIR"
 chmod 700 "$CHAOSZ_DIR"
 chmod 700 "$LOGS_DIR"
 echo "[CHECK] Created $LOGS_DIR and set permissions."
+
+# Move the former flat skill format into the Agent Skills layout before syncing
+# managed source folders. Custom skills keep their original instructions.
+for legacy_skill in "$SKILLS_DIR"/*.md; do
+    [ -f "$legacy_skill" ] || continue
+    skill_name="$(basename "$legacy_skill" .md)"
+    target_skill_dir="$SKILLS_DIR/$skill_name"
+    if [ ! -e "$target_skill_dir" ]; then
+        mkdir -p "$target_skill_dir"
+        mv "$legacy_skill" "$target_skill_dir/SKILL.md"
+        echo "[CHECK] Migrated skill $skill_name to Agent Skills format."
+    fi
+done
+
+# Repository skills are the managed defaults. Update their full folders whenever
+# source changes, but never remove user-created skill folders from the config dir.
+if [ -d "$SETUP_SKILLS_DIR" ]; then
+    echo "[INSTALLING] Synchronizing managed skills..."
+    for source_skill_dir in "$SETUP_SKILLS_DIR"/*; do
+        [ -f "$source_skill_dir/SKILL.md" ] || continue
+        skill_name="$(basename "$source_skill_dir")"
+        target_skill_dir="$SKILLS_DIR/$skill_name"
+        if [ ! -f "$target_skill_dir/SKILL.md" ] || ! cmp -s "$source_skill_dir/SKILL.md" "$target_skill_dir/SKILL.md"; then
+            mkdir -p "$target_skill_dir"
+            cp -a "$source_skill_dir/." "$target_skill_dir/"
+            echo "[CHECK] Installed skill $skill_name."
+        fi
+    done
+fi
 
 # 4. Optional: Node.js check (needed only for npm-based MCP servers like npx -y @modelcontextprotocol/...)
 if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then

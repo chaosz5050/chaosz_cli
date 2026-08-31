@@ -1,6 +1,6 @@
 # Chaosz CLI
 
-[![Version](https://img.shields.io/badge/version-0.9.3--beta-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
+[![Version](https://img.shields.io/badge/version-0.9.4--beta-00ccaa?style=flat-square)](https://github.com/chaosz5050/chaosz_cli)
 [![License](https://img.shields.io/badge/license-Source%20Available-orange?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square&logo=linux&logoColor=white)](https://github.com/chaosz5050/chaosz_cli)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
@@ -26,7 +26,7 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Persistent memory** — AI saves facts across sessions using `[REMEMBER: category: text]` tags; included in every system prompt
 - **Reflection system** — AI automatically consolidates and prunes its memory after every 10 messages in the background, keeping context lean and retaining task flow via rolling summaries
 - **Prompt caching** — automatic cost reduction for DeepSeek and Kimi via session-aware caching
-- **Skill system** — activate on-demand task-mode overlays (coder, code-review, mcp-builder, or your own); stored as plain `.md` files in `~/.config/chaosz/skills/` so you can edit them at any time
+- **Skill system** — standards-based Agent Skills: manually select a task-mode overlay or let Chaosz load one confident match for the current task. Repository-managed defaults live in `skills/<name>/SKILL.md` and are synchronized by `./setup.sh`; local custom skills live in `~/.config/chaosz/skills/`.
 - **Reasoning mode** — toggle extended reasoning output with `/reason on` when supported by the active provider/model (DeepSeek, Kimi, and thinking-capable Ollama models)
 - **Personality** — set a custom AI personality that persists across sessions
 - **Context compaction** — `/compact` summarizes conversation history to free up context window space; auto-triggers at 90%
@@ -83,7 +83,7 @@ All configuration is stored in `~/.config/chaosz/` — this directory is created
 | `memory.json` | Persistent AI memories across all sessions |
 | `history.json` | Input history (↑/↓ navigation) |
 | `themes/` | Theme files; add `.theme` JSON files here to create custom themes |
-| `skills/` | Skill overlay files; add `.md` files here to create custom skills |
+| `skills/` | Agent Skill folders (`<name>/SKILL.md`); repository-managed defaults are synchronized here by `./setup.sh`, while custom local skills are retained |
 | `context/` | Rolling session snapshots (last 5 sessions) |
 | `archive/` | Older sessions archived by date |
 | `backups/` | Pre-edit file backups, one timestamped folder per session; auto-pruned after 7 days |
@@ -112,7 +112,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/header` | Toggle the ASCII logo header on/off (preference is saved) |
 | `/theme` | Interactive theme selection menu |
 | `/skill list` | Interactive skill selection menu (↑/↓ navigate, Enter select, Esc cancel) |
-| `/skill add <name>` | Create a new skill (multiline input; saved as `~/.config/chaosz/skills/<name>.md`) |
+| `/skill add <name>` | Create a new Agent Skill (multiline input; saved as `~/.config/chaosz/skills/<name>/SKILL.md`) |
 | `/skill edit <name>` | Show file path for editing the skill outside the app |
 | `/skill remove <name>` | Delete a skill |
 | `/plan on\|off` | Toggle plan mode — AI proposes a step-by-step plan before acting |
@@ -133,14 +133,37 @@ These two features look similar from the outside (both inject instructions into 
 |---|---|---|
 | **Controls** | HOW the AI talks | WHAT the AI does |
 | **Examples** | "Be concise", "You are a snarky senior engineer", "Respond in Dutch" | "Always read files before editing", code-review checklist, MCP conventions |
-| **Scope** | Every response, regardless of task | Task-specific; only active when selected |
-| **Cardinality** | One (global, always on) | Many exist, one active at a time |
-| **Storage** | `~/.config/chaosz/config.json` | `~/.config/chaosz/skills/<name>.md` |
-| **Visible in footer** | `│ ✦ persona` (dim) | `│ skill-name` (highlighted) |
+| **Scope** | Every response, regardless of task | Task-specific; automatic matches last one task, manual selection persists |
+| **Cardinality** | One (global, always on) | Many exist; one effective skill at a time |
+| **Storage** | `~/.config/chaosz/config.json` | `~/.config/chaosz/skills/<name>/SKILL.md` |
+| **Visible in footer** | `│ ✦ persona` (dim) | `│ skill-name` or `│ auto:skill-name` (highlighted) |
 
 **Rule of thumb:** If you're describing a persona, a tone, or a communication preference — that's Personality. If you're describing a workflow, a methodology, or domain-specific rules about how to approach a category of task — that's a Skill.
 
 **When both are active**, the AI is told explicitly: the skill governs task behavior (what to do), the personality governs tone (how to say it). They are designed to coexist. If you find them genuinely conflicting — e.g., your personality says "always explain everything in detail" but your coder skill says "be minimal" — one of them is in the wrong place.
+
+### Agent Skills and automatic matching
+
+Chaosz now uses the portable [Agent Skills](https://agentskills.io/specification) format. A skill is a self-contained directory, so adding, renaming, or removing a skill never requires a Chaosz code change:
+
+```text
+skills/
+└── omarchy-linux-4/
+    └── SKILL.md
+```
+
+The `SKILL.md` frontmatter must provide a kebab-case `name` that **exactly matches its parent folder** and a `description` that says both what the skill does and when to use it. Put natural task keywords in that description; Chaosz scans only this lightweight metadata before each task and loads the full instruction body only for one confident match.
+
+```yaml
+---
+name: omarchy-linux-4
+description: Configure Omarchy Quattro, Hyprland, window rules, keybindings, and shell settings. Use for Omarchy, Hyprland, Quickshell, gaps, and monitors.
+---
+```
+
+Run `./setup.sh` after changing repository skills. It safely migrates old flat `skills/<name>.md` files in `~/.config/chaosz/skills/` into folders, then synchronizes repository-managed skills. Local custom skill folders are retained.
+
+Automatic matching is deterministic and model-independent: it compares the user request with every skill name and description—no extra model call, latency, or token spend. A manual `/skill` selection always wins until you choose `none`; otherwise a matched skill applies only to the current task and is shown as `auto:<name>` in the footer. If Chaosz cannot confidently distinguish a match, it loads no skill.
 
 ## Plan Mode
 

@@ -407,7 +407,7 @@ def handle_command(app, user_input: str) -> None:
                 f"This controls WHAT the AI does and how it approaches tasks — not its tone.\n"
                 f"For tone/persona, use /personality set instead.\n"
                 f"Type line by line. Press Enter on an empty line or Esc to save.\n"
-                f"File will be saved to: {get_skills_dir()}/{name}.md",
+                f"File will be saved to: {get_skills_dir()}/{name}/SKILL.md",
                 style="yellow"
             ))
 
@@ -432,11 +432,11 @@ def handle_command(app, user_input: str) -> None:
                 app._write("", Text("Usage: /skill edit <name>", style="yellow"))
                 return
             name = args[2]
-            from chaosz.skills import list_skills, get_skills_dir
+            from chaosz.skills import get_skill_path, list_skills
             if name not in list_skills():
                 app._write("", Text(f"Skill '{name}' not found. Use /skill list to see available skills.", style="red"))
                 return
-            path = f"{get_skills_dir()}/{name}.md"
+            path = get_skill_path(name)
             app._write("", Text.from_markup(
                 f"Edit [cyan]{name}[/cyan] directly in your text editor:\n"
                 f"  [dim]{path}[/dim]\n"

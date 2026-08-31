@@ -359,9 +359,10 @@ def build_system_prompt():
             "style rules to every response regardless of what task you are doing.\n"
             + state.reasoning.personality
         )
-    if state.reasoning.active_skill:
-        from chaosz.skills import load_skill
-        skill_content = load_skill(state.reasoning.active_skill)
+    from chaosz.skills import get_effective_skill_name, load_skill
+    effective_skill = get_effective_skill_name()
+    if effective_skill:
+        skill_content = load_skill(effective_skill)
         if skill_content:
             if state.reasoning.personality:
                 parts.append(
@@ -371,7 +372,7 @@ def build_system_prompt():
                     "Where they appear to conflict, the skill takes precedence for task behavior."
                 )
             parts.append(
-                f"\nTask Mode — Active Skill ({state.reasoning.active_skill}):\n"
+                f"\nTask Mode — Active Skill ({effective_skill}):\n"
                 "The following instructions govern WHAT you do and HOW you approach this "
                 "type of task — methodology, workflow, conventions, and deliverable format. "
                 "Follow these task instructions precisely.\n"

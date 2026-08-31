@@ -317,7 +317,10 @@ def run_compose_route(app, user_input: str) -> None:
 
 
 def run_routed_turn(app, user_input: str) -> None:
+    from chaosz.skills import select_turn_skill
+
     if not state.ui.plan_executing:
+        select_turn_skill(user_input)
         if not state.ui.plan_mode and should_trigger_plan_mode(user_input):
             state.ui.plan_mode_this_turn = True
 

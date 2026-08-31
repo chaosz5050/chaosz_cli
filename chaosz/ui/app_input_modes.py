@@ -450,7 +450,7 @@ def confirm_skill_add(app) -> None:
         content = "\n".join(state.reasoning.skill_add_buffer)
         from chaosz.skills import save_skill, get_skills_dir
         save_skill(name, content)
-        app._write("", Text(f"Skill '{name}' saved. Edit it any time at {get_skills_dir()}/{name}.md", style="green"))
+        app._write("", Text(f"Skill '{name}' saved. Edit it any time at {get_skills_dir()}/{name}/SKILL.md", style="green"))
     state.reasoning.skill_add_name = ""
     state.reasoning.skill_add_buffer = []
     state.ui.mode = "CHAT"
@@ -683,6 +683,7 @@ def on_input_submitted(app, event: Input.Submitted) -> None:
     app.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=False)
 
     if user_input.startswith("/"):
+        state.reasoning.turn_skill = None
         handle_command(app, user_input)
         return
 

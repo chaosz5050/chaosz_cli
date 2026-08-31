@@ -39,6 +39,7 @@ class ReasoningState:
         self.personality: str = ""
         self.personality_buffer: list[str] = []
         self.active_skill: str | None = None
+        self.turn_skill: str | None = None
         self.skill_add_name: str = ""
         self.skill_add_buffer: list[str] = []
 

@@ -69,7 +69,12 @@ def update_footer(app) -> None:
         tokens_str += f" [dim]({state.session.cached_tokens} cached)[/dim]"
 
     plan_badge = f" [bold {badge_color}]│ PLAN[/]" if state.ui.plan_mode else ""
-    skill_badge = f" [bold {badge_color}]│ {state.reasoning.active_skill}[/]" if state.reasoning.active_skill else ""
+    if state.reasoning.active_skill:
+        skill_badge = f" [bold {badge_color}]│ {state.reasoning.active_skill}[/]"
+    elif state.reasoning.turn_skill:
+        skill_badge = f" [bold {badge_color}]│ auto:{state.reasoning.turn_skill}[/]"
+    else:
+        skill_badge = ""
     personality_badge = " [dim]│ ✦ persona[/dim]" if state.reasoning.personality else ""
     _perm_icon = {"strict": "🔒", "standard": "🛡", "auto": "⚡"}.get(state.permissions.level, "🔒")
     permission_badge = f" [bold {badge_color}]│ {_perm_icon} {state.permissions.level}[/]"
