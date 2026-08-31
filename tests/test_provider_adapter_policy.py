@@ -57,7 +57,10 @@ from chaosz.stream_adapters import (
     _ollama_think_value,
 )
 from chaosz.ui.app_ai_turn import (
+    _build_verification_prompt,
     _file_edit_recovery_message,
+    _is_verifiable_code_change,
+    _is_verification_command,
     _is_file_edit_search_miss,
     request_cancel,
 )
@@ -371,6 +374,17 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         message = _file_edit_recovery_message("pyproject.toml")
         self.assertIn("file_read for 'pyproject.toml'", message)
         self.assertIn("Do NOT repeat this patch", message)
+
+    def test_code_changes_require_a_real_verification_command(self) -> None:
+        self.assertTrue(_is_verifiable_code_change("file_write", {"path": "app/main.py"}))
+        self.assertTrue(_is_verifiable_code_change("file_edit", {"path": "ui.tsx"}))
+        self.assertFalse(_is_verifiable_code_change("file_write", {"path": "README.md"}))
+        self.assertFalse(_is_verifiable_code_change("file_read", {"path": "main.py"}))
+        self.assertTrue(_is_verification_command("uv run python -m py_compile app/main.py"))
+        self.assertTrue(_is_verification_command("cargo test"))
+        self.assertFalse(_is_verification_command("ls -la"))
+        self.assertIn("VERIFICATION PASS REQUIRED", _build_verification_prompt())
+        self.assertIn("failed", _build_verification_prompt(True))
 
 
 if __name__ == "__main__":

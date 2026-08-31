@@ -131,6 +131,47 @@ def _is_file_edit_search_miss(tool_name: str, status: str, result: object) -> bo
     )
 
 
+_CODE_FILE_SUFFIXES = frozenset({
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java",
+    ".kt", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+})
+
+
+def _is_verifiable_code_change(tool_name: str, args: dict) -> bool:
+    """Return whether a successful file operation changed a source file."""
+    if tool_name not in {"file_write", "file_edit"}:
+        return False
+    path = args.get("path", "")
+    return isinstance(path, str) and os.path.splitext(path)[1].lower() in _CODE_FILE_SUFFIXES
+
+
+def _is_verification_command(command: object) -> bool:
+    """Recognize commands that provide meaningful evidence for a code change."""
+    if not isinstance(command, str):
+        return False
+    lowered = command.lower()
+    return any(marker in lowered for marker in (
+        "pytest", "python -m py_compile", "compileall", "uv run python", "python -c",
+        "npm test", "npm run test", "npm run build", "cargo test", "cargo check",
+        "go test", "mvn test", "gradle test", "dotnet test", "ruff", "mypy",
+    ))
+
+
+def _build_verification_prompt(previous_attempt_failed: bool = False) -> str:
+    if previous_attempt_failed:
+        return (
+            "The required verification command failed. Do not declare completion. Fix the "
+            "reported problem, then run a relevant verification command again before giving "
+            "the final answer."
+        )
+    return (
+        "VERIFICATION PASS REQUIRED: You changed source code, so do not declare completion "
+        "yet. Call shell_exec to run the project's relevant tests or a focused behavioral "
+        "smoke test. For a Python GUI app, use a compile/import check and QT_QPA_PLATFORM=offscreen "
+        "to exercise the changed behavior. If it fails, fix it and verify again."
+    )
+
+
 def _write_ai_turn_iteration_log_entry(
     *,
     loop_index: int,
@@ -229,6 +270,9 @@ def run_ai_turn(app) -> None:
             tool_calls_made = False
             post_tool_final_retry_used = False
             truncation_recovery_used = False
+            verification_required = False
+            verification_passed = False
+            verification_nudges = 0
             seen_file_reads: dict[tuple[str, int, int | None], tuple[int, int] | None] = {}
             tool_error_counts: dict[tuple[str, str], int] = {}
             force_break = False
@@ -377,8 +421,9 @@ def run_ai_turn(app) -> None:
                     })
                     continue
 
-                # Display any text the AI produced this iteration
-                if full_response.strip():
+                # Tool-call prose is progress text. Hold a no-tool completion until the
+                # verification gate below has accepted it.
+                if full_response.strip() and tool_calls_received:
                     disp = process_memory_tags(full_response)
                     app.call_from_thread(app._write_ai_turn, disp.strip())
                     final_response = full_response
@@ -420,6 +465,47 @@ def run_ai_turn(app) -> None:
                             final_iteration_decision="continue",
                         )
                         continue
+                    if (
+                        full_response.strip()
+                        and verification_required
+                        and not verification_passed
+                        and verification_nudges < 2
+                    ):
+                        api_msgs.append({"role": "assistant", "content": full_response})
+                        api_msgs.append({
+                            "role": "user",
+                            "content": _build_verification_prompt(verification_nudges > 0),
+                        })
+                        verification_nudges += 1
+                        app.call_from_thread(
+                            app._write,
+                            "",
+                            Text("▶ Verification pass required before completion…", style="dim cyan"),
+                        )
+                        _write_ai_turn_iteration_log_entry(
+                            loop_index=_loop_iter + 1,
+                            provider=state.provider.active,
+                            model=state.provider.model,
+                            api_msgs_count=api_msgs_count,
+                            api_msgs_chars=api_msgs_chars,
+                            finish_reason=finish_reason_seen,
+                            full_response=full_response,
+                            accumulated_tool_calls_count=0,
+                            parsed_tool_calls_count=0,
+                            parsed_tool_names=[],
+                            tool_calls_made_before=tool_calls_made_before_iter,
+                            tool_calls_made_after=tool_calls_made,
+                            recovery_nudge_injected=True,
+                            branch_taken="verification-retry",
+                            final_iteration_decision="continue",
+                        )
+                        continue
+                    if full_response.strip():
+                        disp = process_memory_tags(full_response)
+                        if verification_required and not verification_passed:
+                            disp += "\n\n⚠ Source changes were not successfully verified."
+                        app.call_from_thread(app._write_ai_turn, disp.strip())
+                        final_response = full_response
                     _write_ai_turn_iteration_log_entry(
                         loop_index=_loop_iter + 1,
                         provider=state.provider.active,
@@ -749,6 +835,10 @@ def run_ai_turn(app) -> None:
                             force_break = True
 
                     result_text = result_content if isinstance(result_content, str) else str(result_content)
+                    if log_status == "ok" and _is_verifiable_code_change(fname, tc_args):
+                        verification_required = True
+                    if fname == "shell_exec" and _is_verification_command(tc_args.get("command")):
+                        verification_passed = log_status == "ok"
                     if "[TRUNCATED:" in result_text:
                         entry_flags.append("result-truncated")
                     _write_tool_result_log_entry(

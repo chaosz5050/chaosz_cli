@@ -19,6 +19,7 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Adaptive Ollama runtime** — inspect local model metadata and use safe runtime context/output budgets instead of blindly loading the advertised maximum; Chaosz also reloads a runner when its active context conflicts with the selected profile
 - **Multi-provider** — switch between DeepSeek, Kimi, Gemini, Mistral, and Ollama at runtime; add/remove providers via an interactive menu
 - **Agentic file operations** — AI can read, write, edit, rename, and delete files; all destructive ops require explicit permission
+- **Verification gate** — after source-code changes, Chaosz requires a meaningful test, compile, or behavioral smoke command before accepting an AI completion; failed checks receive a focused repair pass
 - **Shell execution** — AI can run terminal commands; each command requires your approval (once or session-wide)
 - **Web search** — AI can search the web via DuckDuckGo for current information, recent events, and documentation
 - **MCP support** — connect Model Context Protocol servers (stdio or SSE) to extend the AI with custom tools and context; managed via `/mcp`
@@ -49,7 +50,7 @@ Cloud models remain the fastest route to consistently high-quality autonomous wo
 | [`gemma4:12b`](https://ollama.com/library/gemma4:12b) | Best speed/capability balance for a typical laptop or desktop | ~7.6 GB; supports tools, thinking, and vision; excellent first local-agent test |
 | [`qwen3.8:27b-q4_K_M`](https://ollama.com/library/qwen3.8) | Stronger broad reasoning, coding, and vision when you can tolerate slower turns | ~18 GB; a dense 27B model can be CPU-bound when it cannot fit mostly in VRAM |
 
-Use the **Coding / Tools** temperature preset (`0.15`) for structured tool calls. Keep `/reason off` for faster execution, and turn it on only when a task genuinely needs deeper planning. Start with a contained task, let the model perform a few tool calls, and verify the result before giving it a larger refactor.
+Use the **Coding / Tools** temperature preset (`0.15`) for structured tool calls. Keep `/reason off` for faster execution, and turn it on only when a task genuinely needs deeper planning. Start with a contained task, let the model perform a few tool calls, and verify the result before giving it a larger refactor. Chaosz also enforces a bounded verification pass after source-code changes: the model must run a relevant test, compile check, or behavioral smoke command before its completion is accepted.
 
 Local models are not identical to cloud frontier models: smaller or older models can still produce malformed calls, lose a plan, or confidently describe an action that did not happen. Treat tool results and files on disk as the source of truth. The permission system and automatic backups remain important guardrails.
 
