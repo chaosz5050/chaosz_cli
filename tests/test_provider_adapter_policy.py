@@ -174,6 +174,33 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertTrue(profile["tools_supported"])
         self.assertTrue(profile["vision_supported"])
 
+    def test_sync_repairs_native_context_saved_as_runtime_context(self) -> None:
+        providers = {
+            "ollama": {
+                "model": "qwen3.8:27b-q4_K_M",
+                "local": True,
+                "model_profile": "reasoning",
+                "native_context_window": 262144,
+                "context_window": 262144,
+                "max_output_tokens": 8192,
+            }
+        }
+
+        def apply_safe_profile(data: dict, _model: str) -> dict:
+            data["context_window"] = 8192
+            data["max_output_tokens"] = 8192
+            return {}
+
+        with (
+            patch("chaosz.providers.load_providers", return_value=(providers, "ollama")),
+            patch("chaosz.providers.save_providers"),
+            patch("chaosz.ollama_utils.apply_model_profile", side_effect=apply_safe_profile) as apply_profile,
+        ):
+            sync_runtime_provider_state("ollama", providers)
+
+        apply_profile.assert_called_once_with(providers["ollama"], "qwen3.8:27b-q4_K_M")
+        self.assertEqual(state.provider.max_ctx, 8192)
+
     def test_ollama_request_sends_runtime_limits_and_explicitly_disables_thinking(self) -> None:
         captured: dict = {}
 

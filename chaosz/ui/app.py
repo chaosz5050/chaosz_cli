@@ -311,13 +311,12 @@ class ChaoszApp(App):
         if active == "ollama":
             model = providers.get("ollama", {}).get("model", "")
             if model:
-                from chaosz.ollama_utils import get_model_context_window
+                from chaosz.ollama_utils import apply_model_profile
                 from chaosz.providers import save_providers
-                ctx = get_model_context_window(model)
-                if ctx != providers["ollama"].get("context_window", 8192):
-                    providers["ollama"]["context_window"] = ctx
-                    save_providers(providers, active)
-                state.provider.max_ctx = ctx
+                profile = apply_model_profile(providers["ollama"], model)
+                save_providers(providers, active)
+                state.provider.max_ctx = providers["ollama"]["context_window"]
+                state.provider.max_output_tokens = providers["ollama"]["max_output_tokens"]
                 self._update_footer()
 
     def apply_theme(self, name: str) -> bool:

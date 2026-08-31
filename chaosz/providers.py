@@ -131,9 +131,17 @@ def sync_runtime_provider_state(
     reg = PROVIDER_REGISTRY.get(active_name, PROVIDER_REGISTRY["deepseek"])
 
     # Migrate earlier Ollama entries that only stored the advertised context
-    # window.  New selections are profiled in the UI; this keeps existing
-    # installations safe on their next startup as well.
-    if reg.get("local") and pdata.get("model") and not pdata.get("model_profile"):
+    # window.  Also repair the short-lived startup regression that wrote the
+    # native window into an already-profiled config.  Explicit user choices
+    # remain untouched.
+    has_native_context_as_runtime = (
+        not pdata.get("context_window_user_override")
+        and pdata.get("native_context_window")
+        and pdata.get("context_window") == pdata.get("native_context_window")
+    )
+    if reg.get("local") and pdata.get("model") and (
+        not pdata.get("model_profile") or has_native_context_as_runtime
+    ):
         from chaosz.ollama_utils import apply_model_profile
         apply_model_profile(pdata, pdata["model"])
         providers[active_name] = pdata
