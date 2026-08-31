@@ -258,12 +258,17 @@ def get_native_ollama_client() -> ollama.Client:
 
 
 def prepare_messages_for_ollama(messages: list) -> list:
-    """Convert assistant tool_calls.function.arguments from JSON string to dict.
-    The OpenAI format stores arguments as a JSON string; the Ollama native Python
-    client's Pydantic model requires a dict.  Call this before ollama_client.chat().
+    """Normalize OpenAI-style tool history for Ollama's native chat API.
+
+    Ollama expects function arguments as dictionaries and, unlike OpenAI's
+    protocol, identifies a tool result with ``tool_name``.  Native responses
+    often omit tool-call IDs entirely, so forwarding empty IDs without a name
+    creates malformed history that Qwen can reject after several tool rounds.
     """
     import json as _json
     result = []
+    pending_tool_names: list[str] = []
+    tool_names_by_id: dict[str, str] = {}
     for msg in messages:
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             new_tcs = []
@@ -275,8 +280,31 @@ def prepare_messages_for_ollama(messages: list) -> list:
                         args = _json.loads(args)
                     except _json.JSONDecodeError:
                         args = {}
-                new_tcs.append({**tc, "function": {**fn, "arguments": args}})
-            result.append({**msg, "tool_calls": new_tcs})
+                name = fn.get("name", "")
+                if name:
+                    pending_tool_names.append(name)
+                call_id = tc.get("id")
+                if call_id:
+                    tool_names_by_id[call_id] = name
+                new_tc = {**tc, "function": {**fn, "arguments": args}}
+                if not call_id:
+                    new_tc.pop("id", None)
+                new_tcs.append(new_tc)
+            result.append({**msg, "content": msg.get("content") or "", "tool_calls": new_tcs})
+        elif msg.get("role") == "tool":
+            tool_call_id = msg.get("tool_call_id")
+            tool_name = msg.get("tool_name") or tool_names_by_id.get(tool_call_id or "")
+            if not tool_name and pending_tool_names:
+                tool_name = pending_tool_names.pop(0)
+            elif tool_name and pending_tool_names and pending_tool_names[0] == tool_name:
+                pending_tool_names.pop(0)
+
+            normalized = {**msg}
+            if tool_name:
+                normalized["tool_name"] = tool_name
+            if not tool_call_id:
+                normalized.pop("tool_call_id", None)
+            result.append(normalized)
         else:
             result.append(msg)
     return result

@@ -44,6 +44,7 @@ from chaosz.providers import (
     build_api_params,
     prepare_messages_for_ollama,
     provider_requires_reasoning_echo,
+    prepare_messages_for_ollama,
     sync_runtime_provider_state,
     validate_provider_key,
 )
@@ -164,6 +165,28 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertIs(_ollama_think_value("qwen3:latest", False), False)
         self.assertTrue(_ollama_needs_prompt_think_tag("gemma3:12b"))
         self.assertFalse(_ollama_needs_prompt_think_tag("qwen3:latest"))
+
+    def test_prepare_ollama_messages_uses_tool_name_when_native_call_has_no_id(self) -> None:
+        prepared = prepare_messages_for_ollama([
+            {"role": "user", "content": "Write a file."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "file_write", "arguments": '{"path": "a.py"}'},
+                }],
+            },
+            {"role": "tool", "tool_call_id": "", "content": "File written."},
+        ])
+
+        call = prepared[1]["tool_calls"][0]
+        self.assertEqual(prepared[1]["content"], "")
+        self.assertNotIn("id", call)
+        self.assertEqual(call["function"]["arguments"], {"path": "a.py"})
+        self.assertEqual(prepared[2]["tool_name"], "file_write")
+        self.assertNotIn("tool_call_id", prepared[2])
 
     def test_qwen_profile_uses_safe_runtime_limits_not_native_maximum(self) -> None:
         profile = derive_model_profile(
