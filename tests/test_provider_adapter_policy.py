@@ -236,8 +236,8 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertTrue(request_cancel())
         self.assertFalse(request_cancel())
 
-    def test_ollama_tool_call_idle_budget_allows_cpu_generation(self) -> None:
-        self.assertEqual(OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS, 300)
+    def test_ollama_tool_call_has_no_automatic_idle_cancellation(self) -> None:
+        self.assertIsNone(OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS)
 
     def test_validate_provider_key_openai_compat_uses_chat_probe(self) -> None:
         captured: dict = {}

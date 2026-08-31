@@ -21,9 +21,9 @@ from chaosz.state import state
 
 # Ollama only delivers tool calls once their whole JSON payload is complete.
 # A CPU-heavy local model can therefore be healthy yet emit no stream chunk
-# while composing a source file.  Keep an escape hatch in the UI, but allow a
-# realistic first-response budget before treating the runner as disconnected.
-OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS = 300
+# while composing a source file.  Do not mistake that for a dead runner: the
+# user can always press Esc, which closes the native client immediately.
+OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS: int | None = None
 
 
 class OllamaStreamTimeout(RuntimeError):
@@ -352,7 +352,10 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
         try:
             kind, payload = event_queue.get(timeout=0.25)
         except queue.Empty:
-            if time.monotonic() - last_activity >= OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS:
+            if (
+                OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS is not None
+                and time.monotonic() - last_activity >= OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS
+            ):
                 _close_stream_client()
                 raise OllamaStreamTimeout(
                     f"Ollama produced no response for {OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS} seconds."
