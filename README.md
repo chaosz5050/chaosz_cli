@@ -16,6 +16,7 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Streaming responses** — token-by-token output with markdown and syntax-highlighted code blocks
 - **Live tool streaming** — watch code being written in real-time with matrix-style line-by-line scrolling
 - **Dynamic model selection** — fetch and switch between model versions (e.g., Gemini Pro vs Flash, local Ollama tags) via `/model list`; after choosing a model, a temperature sub-menu appears to the right with 5 presets (Coding/Tools → Wild); selection is saved per-provider
+- **Adaptive Ollama runtime** — inspect local model metadata and use safe runtime context/output budgets instead of blindly loading the advertised maximum; Chaosz also reloads a runner when its active context conflicts with the selected profile
 - **Multi-provider** — switch between DeepSeek, Kimi, Gemini, Mistral, and Ollama at runtime; add/remove providers via an interactive menu
 - **Agentic file operations** — AI can read, write, edit, rename, and delete files; all destructive ops require explicit permission
 - **Shell execution** — AI can run terminal commands; each command requires your approval (once or session-wide)
@@ -38,22 +39,21 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 
 ## Limitations & Best Practices
 
-While Chaosz CLI supports both local and cloud models, **your experience will vary significantly based on the intelligence and training of the active model.**
+Cloud models remain the fastest route to consistently high-quality autonomous work, but **modern local Ollama models can now complete real multi-step coding and tool-use tasks in Chaosz**. Chaosz profiles each selected Ollama model, keeps its native context maximum separate from the practical runtime context, explicitly controls supported thinking modes, recovers failed exact-match edits with a fresh read, and guides local models toward small runnable code increments. These safeguards prevent common local-agent failure modes such as enormous KV-cache allocations, repeated edits, and abandoned tool loops.
 
-> ⚠️ **Local Ollama models are not recommended for agentic use.** They will hallucinate tool calls, fabricate file operations, and describe actions they never actually execute. This is a fundamental model capability issue — not a bug in Chaosz CLI. If you want the full capacity of Chaosz CLI (reliable tool use, plan execution, multi-step agentic tasks), hook it up with a proper API model: **Kimi, DeepSeek, or Gemini**.
+### Recommended local models
 
-**Cloud APIs (Gemini, DeepSeek, Kimi) are recommended for real work.** These models have been explicitly fine-tuned for high-reliability function calling. They natively understand the file operation tools, respect the sandbox boundaries, and can orchestrate complex, multi-file refactors autonomously with minimal prompting.
+| Model | Best for | Practical trade-off |
+|---|---|---|
+| [`devstral:24b`](https://ollama.com/library/devstral) | Best first choice for coding agents and tool-driven repository work | ~14 GB download; text-only; still benefits from substantial CPU/GPU throughput |
+| [`gemma4:12b`](https://ollama.com/library/gemma4:12b) | Best speed/capability balance for a typical laptop or desktop | ~7.6 GB; supports tools, thinking, and vision; excellent first local-agent test |
+| [`qwen3.8:27b-q4_K_M`](https://ollama.com/library/qwen3.8) | Stronger broad reasoning, coding, and vision when you can tolerate slower turns | ~18 GB; a dense 27B model can be CPU-bound when it cannot fit mostly in VRAM |
 
-**Local Models (Ollama) are a different story.** Most local models — even reasonably capable ones like Gemma or Llama — were not fine-tuned for reliable tool use. What you can expect:
+Use the **Coding / Tools** temperature preset (`0.15`) for structured tool calls. Keep `/reason off` for faster execution, and turn it on only when a task genuinely needs deeper planning. Start with a contained task, let the model perform a few tool calls, and verify the result before giving it a larger refactor.
 
-- **Tool calls are unreliable.** Smaller local models frequently forget they have tools available, output malformed JSON, or describe what they *would* do instead of calling the tool. If this happens, be explicit in your prompt: *"Use the `file_write` tool to save this code"*.
-- **Hallucinated actions.** A local model may confidently tell you it wrote a file, edited a function, or ran a command — and then have done none of those things. Always verify the actual result.
-- **Plan mode may not execute.** A common failure: the model writes a reasonable plan, you approve it, and then asks you to re-explain the task from scratch — completely forgetting what it planned. Chaosz has a step driver that attempts to work around this by feeding each plan step back to the model one at a time, but even this is not foolproof with weaker models.
-- **Multi-step agentic tasks are not reliable.** Chaining more than 2-3 tool calls in a single turn requires the model to maintain context across intermediate results. Most local models lose the thread.
+Local models are not identical to cloud frontier models: smaller or older models can still produce malformed calls, lose a plan, or confidently describe an action that did not happen. Treat tool results and files on disk as the source of truth. The permission system and automatic backups remain important guardrails.
 
-**Best local model:** If you do use Ollama, `mistral-small3.2:latest` at temperature `0.15` (Coding / Tools preset) gives the most consistent results — it follows tool call format better than most alternatives and its low temperature reduces the pre-execution hesitation that plagues instruction-tuned models at higher settings. That said, it will still hallucinate actions. Treat its output as a draft, not ground truth.
-
-The short version: **Ollama is fine for chatting and quick questions. For anything involving planning, tool use, or autonomous execution, use a cloud provider.**
+The short version: **local agentic work is viable with a current tool-capable model and a realistic runtime profile; cloud models remain the quality and speed choice for difficult or time-sensitive work.**
 
 ## Installation
 
@@ -147,9 +147,7 @@ Plan mode puts the AI into a deliberate, think-before-you-act workflow. Instead 
 
 Activate it with `/plan on`, or simply use natural language — phrases like *"make a plan for..."* or *"plan out how to..."* will trigger it automatically.
 
-**Local model caveat:** Smaller Ollama models are generally not suited for plan mode. The model may produce a reasonable plan but then fail to follow through when asked to execute. A common failure pattern: the model writes a plan, asks "does this look good?", receives approval — and then completely forgets what it was going to do, asking you to re-explain the task from scratch. This is a model capability issue, not a bug.
-
-Chaosz has a built-in step driver for Ollama: when you approve a plan, it feeds each numbered step back to the model one at a time with explicit "execute only this step" instructions. This helps, but even then a poorly trained model may still lose the thread. For plan mode to work reliably, use a cloud provider (DeepSeek, Kimi, or Gemini).
+**Local model caveat:** Current tool-capable models can execute plans, but smaller or older models may still produce a plausible plan and then lose the thread after approval. Chaosz has a built-in step driver for Ollama: when you approve a plan, it feeds each numbered step back to the model with explicit "execute only this step" instructions. This is most effective with agentic coding models such as Devstral, Qwen3.8, and Gemma 4; use a cloud provider for the highest reliability on complex plans.
 
 ## Memory & Reflection System
 
