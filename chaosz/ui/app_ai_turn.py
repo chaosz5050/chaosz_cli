@@ -891,7 +891,7 @@ def run_ai_turn(app) -> None:
             else:
                 app.call_from_thread(app._write, "", Text(f"API error: {e}", style="bold red"))
         except Exception as e:
-            from chaosz.stream_adapters import OllamaStreamTimeout
+            from chaosz.stream_adapters import OllamaStreamTimeout, OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS
             if isinstance(e, OllamaStreamTimeout):
                 _write_ai_turn_run_outcome_log_entry(
                     final_response_present=False,
@@ -904,7 +904,8 @@ def run_ai_turn(app) -> None:
                 app.call_from_thread(
                     app._write, "",
                     Text(
-                        "Ollama stopped responding. The turn was cancelled after 120 seconds of no output; "
+                        "Ollama stopped responding. The turn was cancelled after "
+                        f"{OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS} seconds of no output; "
                         "try again, or restart Ollama if it remains in Stopping… state.",
                         style="yellow",
                     ),

@@ -19,9 +19,11 @@ from typing import Iterator
 from chaosz.state import state
 
 
-# A local model may take a while to load, but a stream that has emitted nothing
-# for this long is almost always a stopped runner or a broken HTTP connection.
-OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS = 120
+# Ollama only delivers tool calls once their whole JSON payload is complete.
+# A CPU-heavy local model can therefore be healthy yet emit no stream chunk
+# while composing a source file.  Keep an escape hatch in the UI, but allow a
+# realistic first-response budget before treating the runner as disconnected.
+OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS = 300
 
 
 class OllamaStreamTimeout(RuntimeError):

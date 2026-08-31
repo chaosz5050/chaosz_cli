@@ -124,7 +124,14 @@ a new file rather than trying to assemble it with file_edit.
 
 If file_edit reports that its search text was not found, do not repeat that
 edit. Your next tool call must be file_read for that same file. Then make one
-new, short edit using text copied exactly from the fresh read."""
+new, short edit using text copied exactly from the fresh read.
+
+When implementing an app, work in small, runnable vertical slices. Create a
+minimal working app first, then add features in later tool calls. Keep each
+file_write concise (prefer a small module or roughly 1,500 characters or less)
+because Ollama must finish composing a complete tool call before Chaosz can
+receive it. Split larger designs into small modules instead of generating one
+large source file in a single tool call."""
 
 
 def _read_config_file(*, require_corrupt_backup: bool = False) -> dict:

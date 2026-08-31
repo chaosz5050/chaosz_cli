@@ -49,7 +49,12 @@ from chaosz.providers import (
 )
 from chaosz.ollama_utils import derive_model_profile
 from chaosz.state import state
-from chaosz.stream_adapters import _iter_ollama, _ollama_needs_prompt_think_tag, _ollama_think_value
+from chaosz.stream_adapters import (
+    OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS,
+    _iter_ollama,
+    _ollama_needs_prompt_think_tag,
+    _ollama_think_value,
+)
 from chaosz.ui.app_ai_turn import (
     _file_edit_recovery_message,
     _is_file_edit_search_miss,
@@ -230,6 +235,9 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
     def test_cancel_request_is_idempotent(self) -> None:
         self.assertTrue(request_cancel())
         self.assertFalse(request_cancel())
+
+    def test_ollama_tool_call_idle_budget_allows_cpu_generation(self) -> None:
+        self.assertEqual(OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS, 300)
 
     def test_validate_provider_key_openai_compat_uses_chat_probe(self) -> None:
         captured: dict = {}

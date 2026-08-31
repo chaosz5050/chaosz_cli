@@ -274,6 +274,7 @@ def test_build_system_prompt_adds_exact_edit_policy_for_ollama():
 
     assert "Local-model file editing" in prompt
     assert "exact, contiguous substring" in prompt
+    assert "small, runnable vertical slices" in prompt
 
 
 def test_default_system_prompt_distinguishes_shell_from_file_sandbox():
