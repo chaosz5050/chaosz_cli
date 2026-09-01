@@ -154,6 +154,26 @@ def _is_file_edit_search_miss(tool_name: str, status: str, result: object) -> bo
     )
 
 
+def _tool_error_fingerprint(tool_name: str, args: dict) -> tuple[str, str]:
+    """Identify one failed operation without collapsing distinct recovery attempts.
+
+    File edits against a single file often need several different, legitimate
+    search blocks while a local model recovers from an exact-match miss. The
+    repeated-error guard must therefore key on the patch itself, not merely its
+    path. Shell commands already have a natural operation identity.
+    """
+    if tool_name == "file_edit":
+        operation = args.get("edits", [])
+    elif tool_name == "shell_exec":
+        operation = args.get("command", "")
+    else:
+        operation = args.get("path", args.get("old_path", args.get("filename", "")))
+    try:
+        return tool_name, json.dumps(operation, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return tool_name, str(operation)
+
+
 _CODE_FILE_SUFFIXES = frozenset({
     ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java",
     ".kt", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
@@ -940,9 +960,11 @@ def run_ai_turn(app) -> None:
                         entry_flags.append("file-edit-recovery-required")
                         entry_notes = "Exact-match file edit failed; next read of this file is intentionally not deduplicated."
 
-                    # Repeated-error guard: if the same tool+path keeps failing, stop the loop
+                    # Repeated-error guard: stop only when the same operation
+                    # fails again. Different patches against one file are
+                    # legitimate recovery attempts and must remain possible.
                     if log_status == "error":
-                        err_key = (fname, tc_args.get("path", tc_args.get("command", "")))
+                        err_key = _tool_error_fingerprint(fname, tc_args)
                         tool_error_counts[err_key] = tool_error_counts.get(err_key, 0) + 1
                         if tool_error_counts[err_key] >= 2:
                             result_content = (

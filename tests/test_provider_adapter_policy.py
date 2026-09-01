@@ -67,6 +67,7 @@ from chaosz.ui.app_ai_turn import (
     _is_verifiable_code_change,
     _is_verification_command,
     _is_file_edit_search_miss,
+    _tool_error_fingerprint,
     request_cancel,
 )
 
@@ -431,6 +432,24 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         message = _file_edit_recovery_message("pyproject.toml")
         self.assertIn("file_read for 'pyproject.toml'", message)
         self.assertIn("Do NOT repeat this patch", message)
+
+    def test_error_fingerprint_distinguishes_different_file_edit_patches(self) -> None:
+        first = _tool_error_fingerprint(
+            "file_edit",
+            {"path": "main.py", "edits": [{"search": "old one", "replace": "new one"}]},
+        )
+        second = _tool_error_fingerprint(
+            "file_edit",
+            {"path": "main.py", "edits": [{"search": "old two", "replace": "new two"}]},
+        )
+        self.assertNotEqual(first, second)
+
+    def test_error_fingerprint_detects_the_same_file_edit_patch(self) -> None:
+        args = {"path": "main.py", "edits": [{"search": "old", "replace": "new"}]}
+        self.assertEqual(
+            _tool_error_fingerprint("file_edit", args),
+            _tool_error_fingerprint("file_edit", dict(args)),
+        )
 
     def test_code_changes_require_a_real_verification_command(self) -> None:
         self.assertTrue(_is_verifiable_code_change("file_write", {"path": "app/main.py"}))
