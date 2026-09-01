@@ -215,6 +215,29 @@ def _build_verification_prompt(previous_attempt_failed: bool = False) -> str:
     )
 
 
+def _build_failed_verification_recovery_message(command: str) -> str:
+    """Require a code repair before a model repeats any verification."""
+    return (
+        "VERIFICATION BLOCKED: A verification command already failed and no real source change "
+        "has succeeded since then. Do NOT run another test or smoke command yet. Read the file named in "
+        "the traceback (or the relevant source file), fix the reported error with a small edit, then "
+        f"run this command once: {command}"
+    )
+
+
+def _is_verification_blocked_after_failure(
+    verification_failure_active: bool,
+    tool_name: str,
+    args: dict,
+) -> bool:
+    """Block every verification variant until a real source mutation succeeds."""
+    return (
+        verification_failure_active
+        and tool_name == "shell_exec"
+        and _is_verification_command(args.get("command"))
+    )
+
+
 def _build_truncation_tool_action_prompt(attempt: int) -> str:
     """Require a concrete next action after an output-cut-off tool response."""
     retry_note = (
@@ -336,6 +359,9 @@ def run_ai_turn(app) -> None:
             verification_nudges = 0
             seen_file_reads: dict[tuple[str, int, int | None], tuple[int, int] | None] = {}
             tool_error_counts: dict[tuple[str, str], int] = {}
+            verification_failure_active = False
+            blocked_verification_attempts = 0
+            verification_repair_nudges = 0
             force_break = False
             assistant_persisted = False
             fallback_failure_shown = False
@@ -506,6 +532,24 @@ def run_ai_turn(app) -> None:
 
                 # No tool calls — done (with one bounded recovery after tool-use if model returned empty text)
                 if not tool_calls_received:
+                    if verification_failure_active and not full_response.strip():
+                        if verification_repair_nudges < 2:
+                            verification_repair_nudges += 1
+                            api_msgs.append({
+                                "role": "user",
+                                "content": (
+                                    "VERIFICATION REPAIR REQUIRED: The latest verification failed. "
+                                    "Do not provide a final answer and do not run another test yet. "
+                                    "Your next response MUST read the implicated source file, then make "
+                                    "one real source edit that fixes the traceback."
+                                ),
+                            })
+                            app.call_from_thread(
+                                app._write,
+                                "",
+                                Text("▶ A source repair is required before verification can continue…", style="dim cyan"),
+                            )
+                            continue
                     if truncation_tool_action_required:
                         if truncation_tool_action_nudges < MAX_TRUNCATION_TOOL_ACTION_NUDGES:
                             if full_response.strip():
@@ -736,6 +780,7 @@ def run_ai_turn(app) -> None:
                     executor = TOOL_EXECUTORS.get(fname)
                     entry_flags: list[str] = []
                     entry_notes = ""
+                    skip_repeated_error_guard = False
 
                     if tc.get("parse_error"):
                         log_status = "error"
@@ -849,8 +894,28 @@ def run_ai_turn(app) -> None:
                         command = tc_args.get("command", "")
                         reason = tc_args.get("reason", "")
 
+                        # A model that sees a traceback can sometimes issue the
+                        # identical test again while merely changing its prose
+                        # reason. Do not spend another shell turn on that loop:
+                        # it must first make a successful source repair.
+                        if _is_verification_blocked_after_failure(
+                            verification_failure_active,
+                            fname,
+                            tc_args,
+                        ):
+                            blocked_verification_attempts += 1
+                            log_status = "error"
+                            result_content = _build_failed_verification_recovery_message(command)
+                            entry_flags.append("verification-repeat-blocked")
+                            entry_notes = "Verification was blocked pending a real source change."
+                            # Give the model one explicit recovery response. A
+                            # second ignored block ends the turn rather than
+                            # allowing an unbounded no-op loop.
+                            skip_repeated_error_guard = blocked_verification_attempts == 1
+                            if blocked_verification_attempts >= 2:
+                                force_break = True
                         # Check session memory
-                        if is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
+                        elif is_command_allowed_by_session(command, state.permissions.shell_session_allowed):
                             # Execute without prompting
                             log_status, result_content = tool_shell_exec(tc_args)
                         elif decide_shell(command, state.permissions.level) == "allow":
@@ -963,7 +1028,7 @@ def run_ai_turn(app) -> None:
                     # Repeated-error guard: stop only when the same operation
                     # fails again. Different patches against one file are
                     # legitimate recovery attempts and must remain possible.
-                    if log_status == "error":
+                    if log_status == "error" and not skip_repeated_error_guard:
                         err_key = _tool_error_fingerprint(fname, tc_args)
                         tool_error_counts[err_key] = tool_error_counts.get(err_key, 0) + 1
                         if tool_error_counts[err_key] >= 2:
@@ -978,8 +1043,17 @@ def run_ai_turn(app) -> None:
                     result_text = result_content if isinstance(result_content, str) else str(result_content)
                     if log_status == "ok" and _is_verifiable_code_change(fname, tc_args):
                         verification_required = True
+                        # A prior passing check only proves the previous source
+                        # state. Every real source mutation must earn fresh
+                        # verification before completion can be accepted.
+                        verification_passed = False
+                        verification_failure_active = False
+                        blocked_verification_attempts = 0
+                        verification_repair_nudges = 0
                     if fname == "shell_exec" and _is_verification_command(tc_args.get("command")):
                         verification_passed = log_status == "ok"
+                        if log_status != "ok":
+                            verification_failure_active = True
                     if "[TRUNCATED:" in result_text:
                         entry_flags.append("result-truncated")
                     _write_tool_result_log_entry(

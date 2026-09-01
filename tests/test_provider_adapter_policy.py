@@ -60,6 +60,7 @@ from chaosz.ui.app_ai_turn import (
     MAX_TRUNCATION_TOOL_ACTION_NUDGES,
     _build_truncation_tool_action_prompt,
     _build_verification_prompt,
+    _build_failed_verification_recovery_message,
     _incomplete_task_advice,
     _output_limit_advice,
     _timeout_advice,
@@ -67,6 +68,7 @@ from chaosz.ui.app_ai_turn import (
     _is_verifiable_code_change,
     _is_verification_command,
     _is_file_edit_search_miss,
+    _is_verification_blocked_after_failure,
     _tool_error_fingerprint,
     request_cancel,
 )
@@ -457,6 +459,30 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertFalse(_is_verifiable_code_change("file_write", {"path": "README.md"}))
         self.assertFalse(_is_verifiable_code_change("file_read", {"path": "main.py"}))
         self.assertTrue(_is_verification_command("uv run python -m py_compile app/main.py"))
+
+    def test_failed_verification_recovery_requires_a_source_change_first(self) -> None:
+        command = "uv run python main.py"
+        message = _build_failed_verification_recovery_message(command)
+        self.assertIn("VERIFICATION BLOCKED", message)
+        self.assertIn("Do NOT run another test", message)
+        self.assertIn(command, message)
+
+    def test_failed_verification_blocks_different_test_command_variants(self) -> None:
+        self.assertTrue(_is_verification_blocked_after_failure(
+            True,
+            "shell_exec",
+            {"command": "QT_QPA_PLATFORM=offscreen uv run python main.py"},
+        ))
+        self.assertFalse(_is_verification_blocked_after_failure(
+            False,
+            "shell_exec",
+            {"command": "uv run python main.py"},
+        ))
+        self.assertFalse(_is_verification_blocked_after_failure(
+            True,
+            "file_edit",
+            {"path": "main.py"},
+        ))
         self.assertTrue(_is_verification_command("cargo test"))
         self.assertFalse(_is_verification_command("ls -la"))
         self.assertIn("VERIFICATION PASS REQUIRED", _build_verification_prompt())

@@ -317,12 +317,16 @@ def tool_file_write(args: dict) -> tuple[str, str]:
             f"'{path}' is a directory, not a file. "
             f"Provide a full file path including the filename, e.g. '{path}/plan.md'."
         )
-    backup_file(path)
     content = args.get("content", "")
     try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                if f.read() == content:
+                    return "error", f"File '{args['path']}' is unchanged; no source change was made."
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
+        backup_file(path)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return "ok", f"File '{args['path']}' written ({len(content)} bytes)."
@@ -335,13 +339,19 @@ def tool_file_edit(args: dict) -> tuple[str, str]:
     if err:
         return "error", err
     edits = [(e["search"], e["replace"]) for e in args.get("edits", [])]
+    if not edits:
+        return "error", "No patches were provided; no source change was made."
+    if any(search == replace for search, replace in edits):
+        return "error", "No-op file_edit rejected: a search block is identical to its replacement."
     try:
         with open(path, "r", encoding="utf-8") as f:
             original = f.read()
-        backup_file(path)
         new_content, apply_err = apply_surgical_edit(original, edits)
         if apply_err:
             return "error", f"Edit failed: {apply_err}"
+        if new_content == original:
+            return "error", "No-op file_edit rejected: the resulting file content is unchanged."
+        backup_file(path)
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
         return "ok", f"File '{args['path']}' edited ({len(edits)} patch(es) applied)."

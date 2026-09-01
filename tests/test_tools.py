@@ -6,6 +6,8 @@ from chaosz.tools import (
     build_file_read_summary,
     is_file_read_allowed_by_session,
     resolve_safe_path,
+    tool_file_edit,
+    tool_file_write,
 )
 
 
@@ -81,3 +83,30 @@ def test_file_read_summary_includes_line_range():
     assert build_file_read_summary(
         {"path": "main.py", "start_line": 10, "end_line": 20}
     ) == "read 'main.py' lines 10:20"
+
+
+def test_file_edit_rejects_noop_patch_before_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    target = tmp_path / "main.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    status, message = tool_file_edit({
+        "path": "main.py",
+        "edits": [{"search": "value = 1", "replace": "value = 1"}],
+    })
+
+    assert status == "error"
+    assert "No-op file_edit rejected" in message
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_file_write_rejects_identical_existing_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(state.workspace, "working_dir", str(tmp_path))
+    target = tmp_path / "main.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    status, message = tool_file_write({"path": "main.py", "content": "value = 1\n"})
+
+    assert status == "error"
+    assert "unchanged" in message
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
