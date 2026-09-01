@@ -4,7 +4,14 @@ Tests for plan_driver.py — all pure functions, no mocking required.
 
 import pytest
 
-from chaosz.plan_driver import build_step_prompt, is_plan_approval, parse_plan_steps
+from chaosz.plan_driver import (
+    build_step_prompt,
+    build_step_retry_prompt,
+    is_plan_approval,
+    is_plan_generation_phase,
+    parse_plan_steps,
+)
+from chaosz.state import state
 
 
 # ---------------------------------------------------------------------------
@@ -97,3 +104,40 @@ def test_build_step_prompt_includes_stop_instruction():
     steps = ["do something"]
     prompt = build_step_prompt(0, steps)
     assert "Do not proceed" in prompt
+
+
+def test_step_retry_prompt_keeps_the_same_step_and_requires_verification():
+    prompt = build_step_retry_prompt(1, ["inspect", "fix the GUI", "deploy"], goal="repair app")
+    assert "Step 2/3 retry" in prompt
+    assert "fix the GUI" in prompt
+    assert "Do not repeat a failed command unchanged" in prompt
+    assert "verification" in prompt
+
+
+def test_plan_generation_phase_only_before_execution_or_summary():
+    old = (
+        state.ui.plan_mode,
+        state.ui.plan_mode_this_turn,
+        state.ui.plan_executing,
+        state.ui.plan_summarizing,
+    )
+    try:
+        state.ui.plan_mode = True
+        state.ui.plan_mode_this_turn = False
+        state.ui.plan_executing = False
+        state.ui.plan_summarizing = False
+        assert is_plan_generation_phase() is True
+
+        state.ui.plan_executing = True
+        assert is_plan_generation_phase() is False
+
+        state.ui.plan_executing = False
+        state.ui.plan_summarizing = True
+        assert is_plan_generation_phase() is False
+    finally:
+        (
+            state.ui.plan_mode,
+            state.ui.plan_mode_this_turn,
+            state.ui.plan_executing,
+            state.ui.plan_summarizing,
+        ) = old

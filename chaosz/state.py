@@ -39,7 +39,7 @@ class ReasoningState:
         self.personality: str = ""
         self.personality_buffer: list[str] = []
         self.active_skill: str | None = None
-        self.turn_skill: str | None = None
+        self.turn_skills: list[str] = []
         self.skill_add_name: str = ""
         self.skill_add_buffer: list[str] = []
 
@@ -84,11 +84,16 @@ class UiState:
         self.plan_mode_this_turn: bool = False # transient: set by keyword detection, reset after each turn
         self.plan_steps: list = []            # parsed step strings for the step-driver
         self.plan_step_index: int = 0         # which step is currently executing (0-based)
+        self.plan_step_retry_count: int = 0   # bounded automatic repair attempts for this step
         self.plan_executing: bool = False     # True while step-driver is active
         self.plan_summarizing: bool = False   # True during the post-execution summary turn
         self.plan_goal: str = ""              # original user request that triggered the plan
         self.skill_menu_names: list[str] = []
         self.skill_menu_index: int = 0
+        self.context_menu_options: list[int | None] = []
+        self.context_menu_index: int = 0
+        self.context_menu_native: int = 0
+        self.context_menu_automatic: int = 0
         self.permission_menu_names: list[str] = []
         self.permission_menu_index: int = 0
         self.theme_menu_names: list[str] = []

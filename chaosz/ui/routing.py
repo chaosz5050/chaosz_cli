@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from rich.text import Text
+
 from chaosz.state import state
 
 RouteHandler = Callable[[object, str], None]
@@ -317,12 +319,25 @@ def run_compose_route(app, user_input: str) -> None:
 
 
 def run_routed_turn(app, user_input: str) -> None:
-    from chaosz.skills import select_turn_skill
+    from chaosz.skills import select_turn_skills
 
     if not state.ui.plan_executing:
-        select_turn_skill(user_input)
+        selected_skills = select_turn_skills(user_input)
+        if state.reasoning.active_skill:
+            app._write("", Text(f"✦ Manual skill: {state.reasoning.active_skill}", style="dim cyan"))
+        elif selected_skills:
+            names = " + ".join(skill.name for skill in selected_skills)
+            app._write("", Text(f"✦ Auto skills: {names}", style="dim cyan"))
+        app._update_footer()
         if not state.ui.plan_mode and should_trigger_plan_mode(user_input):
             state.ui.plan_mode_this_turn = True
+
+    # Planning has a stricter contract than a normal routed request: it must
+    # always use the agent turn, which withholds tools until approval.  Without
+    # this, a prompt classified as compose/investigate could bypass plan mode.
+    if state.ui.plan_mode or state.ui.plan_mode_this_turn:
+        run_agent_route(app, user_input)
+        return
 
     route = classify_request_route(user_input)
     handler = _route_registry().get(route, run_agent_route)

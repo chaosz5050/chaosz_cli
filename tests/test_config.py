@@ -277,6 +277,20 @@ def test_build_system_prompt_adds_exact_edit_policy_for_ollama():
     assert "small, runnable vertical slices" in prompt
 
 
+def test_build_system_prompt_adds_tool_first_policy_when_ollama_reasoning_is_off():
+    with (
+        patch.object(state.provider, "active", "ollama"),
+        patch.object(state.reasoning, "enabled", False),
+        patch.object(state.workspace, "working_dir", ""),
+        patch.object(state.reasoning, "personality", ""),
+        patch.object(state.reasoning, "memory", {cat: [] for cat in cfg.VALID_CATEGORIES}),
+    ):
+        prompt = cfg.build_system_prompt()
+
+    assert "Local tool-use efficiency (reasoning disabled)" in prompt
+    assert "tool call immediately" in prompt
+
+
 def test_default_system_prompt_distinguishes_shell_from_file_sandbox():
     prompt = cfg.DEFAULT_SYSTEM_PROMPT
 

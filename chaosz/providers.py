@@ -130,21 +130,34 @@ def sync_runtime_provider_state(
     pdata = providers.get(active_name) or {}
     reg = PROVIDER_REGISTRY.get(active_name, PROVIDER_REGISTRY["deepseek"])
 
+    # A former single local override is ambiguous after model switching. Keep
+    # it for the model it was created with, then use model-scoped overrides.
+    legacy_context_migrated = False
+    if reg.get("local") and pdata.get("model") and pdata.get("context_window_user_override"):
+        overrides = pdata.setdefault("context_window_overrides", {})
+        if pdata["model"] not in overrides and isinstance(pdata.get("context_window"), int):
+            overrides[pdata["model"]] = pdata["context_window"]
+        pdata.pop("context_window_user_override", None)
+        legacy_context_migrated = True
+
     # Migrate earlier Ollama entries that only stored the advertised context
     # window.  Also repair the short-lived startup regression that wrote the
     # native window into an already-profiled config.  Explicit user choices
     # remain untouched.
     has_native_context_as_runtime = (
-        not pdata.get("context_window_user_override")
+        not (pdata.get("context_window_overrides") or {}).get(pdata.get("model"))
         and pdata.get("native_context_window")
         and pdata.get("context_window") == pdata.get("native_context_window")
     )
+    profile_applied = False
     if reg.get("local") and pdata.get("model") and (
         not pdata.get("model_profile") or has_native_context_as_runtime
     ):
         from chaosz.ollama_utils import apply_model_profile
         apply_model_profile(pdata, pdata["model"])
         providers[active_name] = pdata
+        profile_applied = True
+    if legacy_context_migrated or profile_applied:
         try:
             save_providers(providers, active_name)
         except OSError:

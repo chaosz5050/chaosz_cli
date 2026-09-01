@@ -24,9 +24,9 @@ A terminal AI chat application for Linux, built with Python and [Textual](https:
 - **Web search** — AI can search the web via DuckDuckGo for current information, recent events, and documentation
 - **MCP support** — connect Model Context Protocol servers (stdio or SSE) to extend the AI with custom tools and context; managed via `/mcp`
 - **Persistent memory** — AI saves facts across sessions using `[REMEMBER: category: text]` tags; included in every system prompt
-- **Reflection system** — AI automatically consolidates and prunes its memory after every 10 messages in the background, keeping context lean and retaining task flow via rolling summaries
+- **Opt-in reflection** — consolidate memory and create a rolling session summary when exiting, without competing with an active local model during agent work
 - **Prompt caching** — automatic cost reduction for DeepSeek and Kimi via session-aware caching
-- **Skill system** — standards-based Agent Skills: manually select a task-mode overlay or let Chaosz load one confident match for the current task. Repository-managed defaults live in `skills/<name>/SKILL.md` and are synchronized by `./setup.sh`; local custom skills live in `~/.config/chaosz/skills/`.
+- **Skill system** — standards-based Agent Skills: manually select a task-mode overlay or let Chaosz load up to two confident, complementary matches for the current task. Repository-managed defaults live in `skills/<name>/SKILL.md` and are synchronized by `./setup.sh`; local custom skills live in `~/.config/chaosz/skills/`.
 - **Reasoning mode** — toggle extended reasoning output with `/reason on` when supported by the active provider/model (DeepSeek, Kimi, and thinking-capable Ollama models)
 - **Personality** — set a custom AI personality that persists across sessions
 - **Context compaction** — `/compact` summarizes conversation history to free up context window space; auto-triggers at 90%
@@ -101,6 +101,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/model del <provider>` | Remove a provider |
 | `/apikey` | Update API key for the current provider |
 | `/reason on\|off` | Toggle reasoning output when supported by the active provider/model |
+| `/context` | Choose the active Ollama model's practical runtime context window; the menu offers its native maximum and progressively smaller safe levels |
 | `/personality set` | Enter a custom AI personality (multiline) |
 | `/personality view` | Show current personality |
 | `/personality clear` | Remove personality |
@@ -115,7 +116,7 @@ The **working directory** is set automatically to wherever you launch the app �
 | `/skill add <name>` | Create a new Agent Skill (multiline input; saved as `~/.config/chaosz/skills/<name>/SKILL.md`) |
 | `/skill edit <name>` | Show file path for editing the skill outside the app |
 | `/skill remove <name>` | Delete a skill |
-| `/plan on\|off` | Toggle plan mode — AI proposes a step-by-step plan before acting |
+| `/plan on\|off` | Toggle plan mode — AI proposes a step-by-step plan before acting; execution begins only after approval |
 | `/mcp list` | Show all configured MCP servers and their connection status |
 | `/mcp add` | Interactive wizard to add a new MCP server (stdio or SSE) |
 | `/mcp remove <name>` | Remove an MCP server |
@@ -134,9 +135,9 @@ These two features look similar from the outside (both inject instructions into 
 | **Controls** | HOW the AI talks | WHAT the AI does |
 | **Examples** | "Be concise", "You are a snarky senior engineer", "Respond in Dutch" | "Always read files before editing", code-review checklist, MCP conventions |
 | **Scope** | Every response, regardless of task | Task-specific; automatic matches last one task, manual selection persists |
-| **Cardinality** | One (global, always on) | Many exist; one effective skill at a time |
+| **Cardinality** | One (global, always on) | Many exist; one manual skill or up to two automatic skills per task |
 | **Storage** | `~/.config/chaosz/config.json` | `~/.config/chaosz/skills/<name>/SKILL.md` |
-| **Visible in footer** | `│ ✦ persona` (dim) | `│ skill-name` or `│ auto:skill-name` (highlighted) |
+| **Visible in footer** | `│ ✦ persona` (dim) | `│ ✦ 1 skill` or `│ ✦ 2 skills` (highlighted) |
 
 **Rule of thumb:** If you're describing a persona, a tone, or a communication preference — that's Personality. If you're describing a workflow, a methodology, or domain-specific rules about how to approach a category of task — that's a Skill.
 
@@ -152,7 +153,7 @@ skills/
     └── SKILL.md
 ```
 
-The `SKILL.md` frontmatter must provide a kebab-case `name` that **exactly matches its parent folder** and a `description` that says both what the skill does and when to use it. Put natural task keywords in that description; Chaosz scans only this lightweight metadata before each task and loads the full instruction body only for one confident match.
+The `SKILL.md` frontmatter must provide a kebab-case `name` that **exactly matches its parent folder** and a `description` that says both what the skill does and when to use it. Put specific natural task keywords in that description; Chaosz scans only this lightweight metadata before each task and loads the full instruction body only for up to two confident matches.
 
 ```yaml
 ---
@@ -163,15 +164,15 @@ description: Configure Omarchy Quattro, Hyprland, window rules, keybindings, and
 
 Run `./setup.sh` after changing repository skills. It safely migrates old flat `skills/<name>.md` files in `~/.config/chaosz/skills/` into folders, then synchronizes repository-managed skills. Local custom skill folders are retained.
 
-Automatic matching is deterministic and model-independent: it compares the user request with every skill name and description—no extra model call, latency, or token spend. A manual `/skill` selection always wins until you choose `none`; otherwise a matched skill applies only to the current task and is shown as `auto:<name>` in the footer. If Chaosz cannot confidently distinguish a match, it loads no skill.
+Automatic matching is deterministic and model-independent: it compares the user request with every skill name and description—no extra model call, latency, or token spend. A manual `/skill` selection always wins until you choose `none`; otherwise up to two matched skills apply only to the current task. Their names are printed when the turn starts and the footer shows a compact count. If Chaosz cannot confidently distinguish a match, it loads no skill.
 
 ## Plan Mode
 
-Plan mode puts the AI into a deliberate, think-before-you-act workflow. Instead of immediately executing changes, the AI first reasons through the problem and proposes a numbered step-by-step plan. You review it, then say *"execute"* (or *"go ahead"*) to proceed.
+Plan mode puts the AI into a deliberate, think-before-you-act workflow. Instead of immediately executing changes, the AI first proposes a numbered step-by-step plan. During this drafting phase Chaosz withholds file, shell, and MCP tools, so the plan cannot change your workspace before you approve it in the on-screen menu.
 
 Activate it with `/plan on`, or simply use natural language — phrases like *"make a plan for..."* or *"plan out how to..."* will trigger it automatically.
 
-**Local model caveat:** Current tool-capable models can execute plans, but smaller or older models may still produce a plausible plan and then lose the thread after approval. Chaosz has a built-in step driver for Ollama: when you approve a plan, it feeds each numbered step back to the model with explicit "execute only this step" instructions. This is most effective with agentic coding models such as Devstral, Qwen3.8, and Gemma 4; use a cloud provider for the highest reliability on complex plans.
+**Local model caveat:** Current tool-capable models can execute plans, but smaller or older models may still lose the thread after approval. Chaosz has a built-in step driver for Ollama: when you approve a plan, it feeds each numbered step back to the model with explicit "execute only this step" instructions. A source-changing step advances only after a terminal response and a successful relevant verification command. If it fails, Chaosz retains the step and gives the model one focused repair retry before stopping transparently. This is most effective with agentic coding models such as Devstral, Qwen3.8, and Gemma 4; use a cloud provider for the highest reliability on complex plans.
 
 ## Memory & Reflection System
 
@@ -185,12 +186,12 @@ Valid categories: `about_user`, `preferences`, `projects`, `top_of_mind`, `works
 
 Tags are stripped from displayed output and written to `~/.config/chaosz/memory.json`. Memories are injected into every system prompt automatically.
 
-The **reflection system** runs automatically in the background whenever 10 messages have accumulated in the current session. It performs three key tasks:
+The **reflection system** is offered when you exit Chaosz. It performs three key tasks:
 1. **Memory Pruning:** Re-reads the current session and uses the AI to intelligently prune stale, duplicate, or misplaced memory entries.
 2. **Context Learning:** Extracts architectural rules and codebase conventions into the `workspace_context` category.
 3. **Session Snapshot:** Writes a concise rolling summary to the on-disk session file so that the next startup restores a lean snapshot rather than the full raw history. The live in-memory conversation is left intact — full context is preserved until the separate auto-compaction at 90% kicks in.
 
-Reflection is entirely non-blocking; you can continue typing while it processes in the background. You'll see a subtle `░▒▓ REFLECTING ▓▒░` indicator in the status bar when it's active.
+Keeping reflection at exit avoids a second model call competing with an active local agent for CPU, VRAM, and the Ollama runner. You'll see a subtle `░▒▓ REFLECTING ▓▒░` indicator while it is active.
 
 Use `/memory show` to inspect memories at any time.
 

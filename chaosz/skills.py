@@ -160,12 +160,14 @@ def _tokens(text: str) -> set[str]:
     return set(_TOKEN_RE.findall(text.lower()))
 
 
-def find_matching_skill(user_input: str) -> Skill | None:
-    """Return one high-confidence deterministic match for a user's new task."""
+def find_matching_skills(user_input: str, max_skills: int = 2) -> list[Skill]:
+    """Return up to ``max_skills`` high-confidence deterministic matches."""
+    if max_skills <= 0:
+        return []
     text = (user_input or "").lower()
     prompt_tokens = _tokens(text)
     if not prompt_tokens:
-        return None
+        return []
 
     skills = discover_skills()
     description_token_sets = {
@@ -198,33 +200,56 @@ def find_matching_skill(user_input: str) -> Skill | None:
             score += 6
         candidates.append((score, len(matched_name | matched_description), strong_match, skill))
 
-    candidates.sort(key=lambda item: (-item[0], -item[1], item[3].name))
-    if not candidates or candidates[0][0] == 0:
-        return None
-    score, matched_terms, strong_match, winner = candidates[0]
-    next_score = candidates[1][0] if len(candidates) > 1 else 0
-    if not strong_match and matched_terms < 2:
-        return None
-    if not strong_match and score < next_score + 2:
-        return None
-    return winner
+    eligible = [
+        candidate
+        for candidate in candidates
+        if candidate[0] > 0 and (candidate[2] or candidate[1] >= 2)
+    ]
+    eligible.sort(key=lambda item: (-item[0], -item[1], item[3].name))
+    return [candidate[3] for candidate in eligible[:max_skills]]
+
+
+def find_matching_skill(user_input: str) -> Skill | None:
+    """Return the highest-ranked automatic match for compatibility callers."""
+    matches = find_matching_skills(user_input, max_skills=1)
+    return matches[0] if matches else None
+
+
+def select_turn_skills(user_input: str) -> list[Skill]:
+    """Set transient automatic skills unless a persistent manual skill is active."""
+    from chaosz.state import state
+
+    state.reasoning.turn_skills = []
+    if state.reasoning.active_skill:
+        return []
+    matches = find_matching_skills(user_input)
+    state.reasoning.turn_skills = [skill.name for skill in matches]
+    return matches
 
 
 def select_turn_skill(user_input: str) -> Skill | None:
-    """Set a transient automatic skill unless a persistent manual skill is active."""
+    """Return the first selected skill for compatibility callers."""
+    matches = select_turn_skills(user_input)
+    return matches[0] if matches else None
+
+
+def clear_turn_skills() -> None:
+    """Clear automatic skills once their task has reached a terminal state."""
     from chaosz.state import state
 
-    state.reasoning.turn_skill = None
+    state.reasoning.turn_skills = []
+
+
+def get_effective_skill_names() -> list[str]:
+    """Return the manual override or this turn's automatic skills in order."""
+    from chaosz.state import state
+
     if state.reasoning.active_skill:
-        return None
-    matched = find_matching_skill(user_input)
-    if matched:
-        state.reasoning.turn_skill = matched.name
-    return matched
+        return [state.reasoning.active_skill]
+    return list(state.reasoning.turn_skills)
 
 
 def get_effective_skill_name() -> str | None:
-    """Return the persistent manual skill or the current task's automatic skill."""
-    from chaosz.state import state
-
-    return state.reasoning.active_skill or state.reasoning.turn_skill
+    """Return the first effective skill for compatibility callers."""
+    names = get_effective_skill_names()
+    return names[0] if names else None

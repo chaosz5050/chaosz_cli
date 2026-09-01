@@ -379,6 +379,8 @@ def run_compose_turn(app, _user_input: str) -> None:
         finally:
             state.ui.is_thinking = False
             state.ui.cancel_requested = False
+            from chaosz.skills import clear_turn_skills
+            clear_turn_skills()
             app.call_from_thread(app._stop_glitch)
             app.call_from_thread(app._set_input_label, "You: ")
             app.call_from_thread(app._update_footer)

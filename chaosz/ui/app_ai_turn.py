@@ -38,6 +38,29 @@ AI_TURN_LOG_PATH = os.path.join(CHAOSZ_DIR, "logs", "ai_turn.log")
 TOOL_RESULT_PREVIEW_CHARS = 500
 TOOL_ARGS_SUMMARY_CHARS = 1200
 AI_TURN_PREVIEW_CHARS = 500
+MAX_TRUNCATION_TOOL_ACTION_NUDGES = 2
+
+
+def _output_limit_advice() -> str:
+    """Explain an output cutoff without confusing it with context exhaustion."""
+    from chaosz.ollama_utils import format_context_window
+
+    budget = format_context_window(state.provider.max_output_tokens)
+    return (
+        f"Output limit reached ({budget}), not context exhaustion. "
+        "Progress is preserved; retry with a smaller step or a lighter model."
+    )
+
+
+def _timeout_advice() -> str:
+    """Give a cautious, provider-aware response to an unresponsive runner."""
+    if state.provider.active == "ollama":
+        return "Ollama stopped responding. Try again; if it repeats, lower /context or choose a lighter model."
+    return "The provider stopped responding. Try again or check the provider's service status."
+
+
+def _incomplete_task_advice() -> str:
+    return "The pending step was not completed. Earlier tool changes were kept; retry with one focused next step."
 
 
 def _summarize_tool_args(args: dict) -> tuple[str, bool]:
@@ -172,6 +195,20 @@ def _build_verification_prompt(previous_attempt_failed: bool = False) -> str:
     )
 
 
+def _build_truncation_tool_action_prompt(attempt: int) -> str:
+    """Require a concrete next action after an output-cut-off tool response."""
+    retry_note = (
+        "This is your final recovery attempt. " if attempt >= MAX_TRUNCATION_TOOL_ACTION_NUDGES else ""
+    )
+    return (
+        "TRUNCATION RECOVERY REQUIRED: Your previous response was cut off before a complete "
+        "tool action could be processed. Do not reply with a plan, progress update, apology, or "
+        f"final answer. {retry_note}Your next response MUST contain one appropriate tool call. "
+        "For source work, make the next file_write or file_edit small; for inspection, use file_read "
+        "or shell_exec. After the tool result, continue in small steps."
+    )
+
+
 def _write_ai_turn_iteration_log_entry(
     *,
     loop_index: int,
@@ -259,6 +296,8 @@ def run_ai_turn(app) -> None:
     def _thread():
         state.ui.is_thinking = True
         show_plan_approval = False
+        plan_step_ready_to_advance = False
+        plan_step_failure_reason = ""
         # Clean up any stale plan approval menu left from a previous turn
         app.call_from_thread(lambda: app.query("#plan-approval-menu").remove())
         app.call_from_thread(app._start_glitch)
@@ -270,6 +309,8 @@ def run_ai_turn(app) -> None:
             tool_calls_made = False
             post_tool_final_retry_used = False
             truncation_recovery_used = False
+            truncation_tool_action_required = False
+            truncation_tool_action_nudges = 0
             verification_required = False
             verification_passed = False
             verification_nudges = 0
@@ -278,6 +319,7 @@ def run_ai_turn(app) -> None:
             force_break = False
             assistant_persisted = False
             fallback_failure_shown = False
+            terminal_response_received = False
             prev_iter_fingerprints: frozenset | None = None
 
             def _resolve_read_key(args: dict) -> tuple[str, int, int | None] | None:
@@ -333,7 +375,13 @@ def run_ai_turn(app) -> None:
                 tool_line_buffer = ""
                 active_tool_id = None
 
-                tools = None if state.ui.plan_summarizing else get_all_tools()
+                from chaosz.plan_driver import is_plan_generation_phase
+
+                plan_generation_phase = is_plan_generation_phase()
+                # Plan drafting is a capability boundary, not merely a prompt
+                # instruction.  The model cannot touch files or run commands
+                # until the user has approved the displayed plan.
+                tools = None if (state.ui.plan_summarizing or plan_generation_phase) else get_all_tools()
 
                 for chunk in _stream(api_msgs, tools, state.provider.model):
                     if chunk.reasoning_line:
@@ -390,6 +438,20 @@ def run_ai_turn(app) -> None:
                 if reasoning_started:
                     app.call_from_thread(app._end_reasoning_block)
 
+                # A provider/parser should never yield tool calls when no
+                # tools were exposed, but keep this guard for malformed local
+                # model output.  Never execute those calls during planning.
+                if plan_generation_phase and tool_calls_received:
+                    tool_calls_received = []
+                    app.call_from_thread(
+                        app._write,
+                        "",
+                        Text(
+                            "⚠ Ignored tool calls while drafting the plan. Approve the plan before execution.",
+                            style="yellow",
+                        ),
+                    )
+
                 # Output token limit hit — discard partial tool calls and inject recovery hint
                 if finish_reason_seen == "length":
                     if truncation_recovery_used:
@@ -397,27 +459,21 @@ def run_ai_turn(app) -> None:
                             app._write, "",
                             Text(
                                 "⚠ Output truncated again — stopping to avoid a retry loop. "
-                                "Start a new turn with a smaller task or raise the output budget.",
+                                + _output_limit_advice(),
                                 style="yellow",
                             ),
                         )
                         break
                     app.call_from_thread(
                         app._write, "",
-                        Text("⚠ Output truncated (token limit reached).", style="yellow"),
+                        Text("⚠ " + _output_limit_advice() + " Recovering…", style="yellow"),
                     )
                     tool_calls_received = []
                     truncation_recovery_used = True
+                    truncation_tool_action_required = True
                     api_msgs.append({
                         "role": "user",
-                        "content": (
-                            "Your previous response was cut off because it exceeded the output token limit. "
-                            "Do NOT retry writing the full file content in one call. Instead:\n"
-                            "- For an existing file: use file_edit with search/replace patches\n"
-                            "- For a new file: break it into logical sections, write each with separate "
-                            "file_write calls, then use file_edit to connect them\n"
-                            "Continue from where you were cut off using this strategy."
-                        ),
+                        "content": _build_truncation_tool_action_prompt(0),
                     })
                     continue
 
@@ -430,6 +486,67 @@ def run_ai_turn(app) -> None:
 
                 # No tool calls — done (with one bounded recovery after tool-use if model returned empty text)
                 if not tool_calls_received:
+                    if truncation_tool_action_required:
+                        if truncation_tool_action_nudges < MAX_TRUNCATION_TOOL_ACTION_NUDGES:
+                            if full_response.strip():
+                                api_msgs.append({"role": "assistant", "content": full_response})
+                            truncation_tool_action_nudges += 1
+                            api_msgs.append({
+                                "role": "user",
+                                "content": _build_truncation_tool_action_prompt(
+                                    truncation_tool_action_nudges,
+                                ),
+                            })
+                            app.call_from_thread(
+                                app._write,
+                                "",
+                                Text("▶ A tool action is required to resume the truncated task…", style="dim cyan"),
+                            )
+                            _write_ai_turn_iteration_log_entry(
+                                loop_index=_loop_iter + 1,
+                                provider=state.provider.active,
+                                model=state.provider.model,
+                                api_msgs_count=api_msgs_count,
+                                api_msgs_chars=api_msgs_chars,
+                                finish_reason=finish_reason_seen,
+                                full_response=full_response,
+                                accumulated_tool_calls_count=0,
+                                parsed_tool_calls_count=0,
+                                parsed_tool_names=[],
+                                tool_calls_made_before=tool_calls_made_before_iter,
+                                tool_calls_made_after=tool_calls_made,
+                                recovery_nudge_injected=True,
+                                branch_taken="truncation-tool-action-retry",
+                                final_iteration_decision="continue",
+                            )
+                            continue
+                        app.call_from_thread(
+                            app._write,
+                            "",
+                            Text(
+                                "⚠ The model did not resume with a tool action after output truncation. "
+                                + _incomplete_task_advice(),
+                                style="yellow",
+                            ),
+                        )
+                        _write_ai_turn_iteration_log_entry(
+                            loop_index=_loop_iter + 1,
+                            provider=state.provider.active,
+                            model=state.provider.model,
+                            api_msgs_count=api_msgs_count,
+                            api_msgs_chars=api_msgs_chars,
+                            finish_reason=finish_reason_seen,
+                            full_response=full_response,
+                            accumulated_tool_calls_count=0,
+                            parsed_tool_calls_count=0,
+                            parsed_tool_names=[],
+                            tool_calls_made_before=tool_calls_made_before_iter,
+                            tool_calls_made_after=tool_calls_made,
+                            recovery_nudge_injected=True,
+                            branch_taken="truncation-tool-action-exhausted",
+                            final_iteration_decision="break",
+                        )
+                        break
                     # Recovery nudge: Some models (like DeepSeek or Kimi) sometimes return 
                     # empty content after a sequence of tool calls, even though they should 
                     # provide a final summary. We inject a hidden user nudge to force a 
@@ -506,6 +623,7 @@ def run_ai_turn(app) -> None:
                             disp += "\n\n⚠ Source changes were not successfully verified."
                         app.call_from_thread(app._write_ai_turn, disp.strip())
                         final_response = full_response
+                        terminal_response_received = True
                     _write_ai_turn_iteration_log_entry(
                         loop_index=_loop_iter + 1,
                         provider=state.provider.active,
@@ -525,6 +643,7 @@ def run_ai_turn(app) -> None:
                     )
                     break
 
+                truncation_tool_action_required = False
                 tool_calls_made = True
 
                 # Build structured tool call list from adapter output
@@ -915,17 +1034,16 @@ def run_ai_turn(app) -> None:
                 append_to_live_session("assistant", final_response)
                 assistant_persisted = True
 
-                # Auto-trigger reflection if enough messages have accumulated
-                real_messages = [m for m in state.session.messages if m.get("role") != "reflection_summary"]
-                if len(real_messages) >= 10 and not state.background.reflection_active:
-                    threading.Thread(target=state.trigger_reflection, args=(app,), daemon=True).start()
+                # Reflection is deliberately opt-in (currently offered on
+                # exit).  A background model call during agent work competes
+                # with local runners and can interrupt a long task.
             elif tool_calls_made:
                 app.call_from_thread(
                     app._write,
                     "",
                     Text(
                         "● AI\nUnable to produce a final answer after completing tool calls. "
-                        "The model returned no final response.",
+                        "The model returned no final response. " + _incomplete_task_advice(),
                         style="yellow",
                     ),
                 )
@@ -937,6 +1055,20 @@ def run_ai_turn(app) -> None:
                 assistant_persisted=assistant_persisted,
                 fallback_failure_shown=fallback_failure_shown,
             )
+
+            # A planned step advances only on evidence.  In particular, a
+            # source-changing step must finish with a model response *and* a
+            # successful verification command.  This prevents a failed smoke
+            # test followed by silence from being reported as plan progress.
+            if state.ui.plan_executing:
+                if state.ui.cancel_requested:
+                    plan_step_failure_reason = "the turn was cancelled"
+                elif fallback_failure_shown or not terminal_response_received:
+                    plan_step_failure_reason = "the model did not provide a final response"
+                elif verification_required and not verification_passed:
+                    plan_step_failure_reason = "required verification did not pass"
+                else:
+                    plan_step_ready_to_advance = True
 
         except AuthenticationError:
             _write_ai_turn_run_outcome_log_entry(
@@ -994,8 +1126,7 @@ def run_ai_turn(app) -> None:
                 app.call_from_thread(
                     app._write, "",
                     Text(
-                        "Ollama stopped responding. The turn was cancelled; try again, "
-                        "or restart Ollama if it remains in Stopping… state.",
+                        _timeout_advice(),
                         style="yellow",
                     ),
                 )
@@ -1032,6 +1163,13 @@ def run_ai_turn(app) -> None:
                         state.ui.plan_mode = True  # promote to persistent so Discuss turns keep plan context
                         show_plan_approval = True
 
+            # Automatic skills describe one user task. Keep them while that task
+            # is waiting for plan approval or moving through its generated
+            # steps; otherwise clear them before returning to the input prompt.
+            if not state.ui.plan_executing and not show_plan_approval:
+                from chaosz.skills import clear_turn_skills
+                clear_turn_skills()
+
             state.ui.is_thinking = False
             state.ui.cancel_requested = False
             state.ui.plan_summarizing = False
@@ -1041,37 +1179,79 @@ def run_ai_turn(app) -> None:
             app.call_from_thread(app._update_footer)
 
             if state.ui.plan_executing:
-                next_index = state.ui.plan_step_index + 1
-                if next_index < len(state.ui.plan_steps):
-                    from chaosz.plan_driver import build_step_prompt
-                    from chaosz.session import append_to_live_session
-                    state.ui.plan_step_index = next_index
-                    next_prompt = build_step_prompt(next_index, state.ui.plan_steps, state.ui.plan_goal)
-                    total = len(state.ui.plan_steps)
-                    app.call_from_thread(
-                        app._write, "",
-                        Text(f"▶ Step {next_index + 1}/{total}", style="dim cyan")
-                    )
-                    state.session.messages.append({"role": "user", "content": next_prompt})
-                    append_to_live_session("user", next_prompt)
-                    app.call_from_thread(app._run_routed_turn, next_prompt)
+                if not plan_step_ready_to_advance:
+                    retry_limit = 1
+                    if state.ui.plan_step_retry_count < retry_limit and not state.ui.cancel_requested:
+                        from chaosz.plan_driver import build_step_retry_prompt
+                        from chaosz.session import append_to_live_session
+
+                        state.ui.plan_step_retry_count += 1
+                        retry_prompt = build_step_retry_prompt(
+                            state.ui.plan_step_index,
+                            state.ui.plan_steps,
+                            state.ui.plan_goal,
+                        )
+                        total = len(state.ui.plan_steps)
+                        app.call_from_thread(
+                            app._write,
+                            "",
+                            Text(
+                                f"⚠ Step {state.ui.plan_step_index + 1}/{total} is incomplete "
+                                f"({plan_step_failure_reason or 'verification failed'}). Retrying once…",
+                                style="yellow",
+                            ),
+                        )
+                        state.session.messages.append({"role": "user", "content": retry_prompt})
+                        append_to_live_session("user", retry_prompt)
+                        app.call_from_thread(app._run_routed_turn, retry_prompt)
+                    else:
+                        state.ui.plan_executing = False
+                        state.ui.plan_mode = True
+                        app.call_from_thread(
+                            app._write,
+                            "",
+                            Text(
+                                f"⚠ Step {state.ui.plan_step_index + 1}/{len(state.ui.plan_steps)} remains "
+                                f"incomplete ({plan_step_failure_reason or 'verification failed'}). "
+                                "Ask to retry it after reviewing the error.",
+                                style="yellow",
+                            ),
+                        )
+                        app.call_from_thread(lambda: app.query_one("#user-input").focus())
                 else:
-                    # All steps done — run a dedicated summary turn instead of stopping silently
-                    state.ui.plan_executing = False
-                    state.ui.plan_step_index = 0
-                    state.ui.plan_steps = []
-                    state.ui.plan_goal = ""
-                    state.ui.plan_mode = False        # belt-and-suspenders: ensures _was_plan_turn=False in summary turn
-                    state.ui.plan_summarizing = True
-                    from chaosz.session import append_to_live_session
-                    summary_msg = "All steps complete. Describe what you did."
-                    state.session.messages.append({"role": "user", "content": summary_msg})
-                    append_to_live_session("user", summary_msg)
-                    app.call_from_thread(
-                        app._write, "",
-                        Text("✓ All steps complete.", style="bold green")
-                    )
-                    app.call_from_thread(app._run_ai_turn)  # run_ai_turn takes only app; msg already in state
+                    state.ui.plan_step_retry_count = 0
+                    next_index = state.ui.plan_step_index + 1
+                    if next_index < len(state.ui.plan_steps):
+                        from chaosz.plan_driver import build_step_prompt
+                        from chaosz.session import append_to_live_session
+                        state.ui.plan_step_index = next_index
+                        next_prompt = build_step_prompt(next_index, state.ui.plan_steps, state.ui.plan_goal)
+                        total = len(state.ui.plan_steps)
+                        app.call_from_thread(
+                            app._write, "",
+                            Text(f"▶ Step {next_index + 1}/{total}", style="dim cyan")
+                        )
+                        state.session.messages.append({"role": "user", "content": next_prompt})
+                        append_to_live_session("user", next_prompt)
+                        app.call_from_thread(app._run_routed_turn, next_prompt)
+                    else:
+                        # All steps done — run a dedicated summary turn instead of stopping silently
+                        state.ui.plan_executing = False
+                        state.ui.plan_step_index = 0
+                        state.ui.plan_step_retry_count = 0
+                        state.ui.plan_steps = []
+                        state.ui.plan_goal = ""
+                        state.ui.plan_mode = False        # belt-and-suspenders: ensures _was_plan_turn=False in summary turn
+                        state.ui.plan_summarizing = True
+                        from chaosz.session import append_to_live_session
+                        summary_msg = "All steps complete. Describe what you did."
+                        state.session.messages.append({"role": "user", "content": summary_msg})
+                        append_to_live_session("user", summary_msg)
+                        app.call_from_thread(
+                            app._write, "",
+                            Text("✓ All steps complete.", style="bold green")
+                        )
+                        app.call_from_thread(app._run_ai_turn)  # run_ai_turn takes only app; msg already in state
             elif show_plan_approval:
                 app.call_from_thread(app._render_plan_approval_menu)
                 app.call_from_thread(lambda: setattr(state.ui, "mode", "PLAN_APPROVE"))

@@ -505,6 +505,18 @@ def _handle_mode_skill_menu(app) -> bool:
     return True
 
 
+def _handle_mode_context_select(app) -> bool:
+    options = state.ui.context_menu_options
+    idx = state.ui.context_menu_index
+    if 0 <= idx < len(options):
+        app._confirm_context_window(options[idx])
+    app.query("#context-menu").remove()
+    state.ui.mode = "CHAT"
+    app._set_input_label("You: ")
+    app._set_status("Ready")
+    return True
+
+
 def _handle_mode_skill_add(app, user_input: str) -> bool:
     if user_input:
         state.reasoning.skill_add_buffer.append(user_input)
@@ -530,6 +542,8 @@ def _handle_mode_dispatch(app, user_input: str) -> bool:
         return _handle_mode_model_select_version(app)
     if state.ui.mode == "TEMP_SELECT":
         return _handle_mode_temp_select(app)
+    if state.ui.mode == "CONTEXT_SELECT":
+        return _handle_mode_context_select(app)
     if state.ui.mode == "MODEL_ADD_SELECT":
         return _handle_mode_model_add_select(app)
     if state.ui.mode == "MODEL_ADD_KEY":
@@ -607,6 +621,11 @@ def select_menu_by_number(app, n: int) -> bool:
             return False
         state.provider.temp_menu_index = idx
         return _handle_mode_temp_select(app)
+    if mode == "CONTEXT_SELECT":
+        if idx >= len(state.ui.context_menu_options):
+            return False
+        state.ui.context_menu_index = idx
+        return _handle_mode_context_select(app)
     if mode == "SKILL_MENU":
         if idx >= len(state.ui.skill_menu_names) + 1:  # +1 for the "none" entry
             return False
@@ -683,7 +702,7 @@ def on_input_submitted(app, event: Input.Submitted) -> None:
     app.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=False)
 
     if user_input.startswith("/"):
-        state.reasoning.turn_skill = None
+        state.reasoning.turn_skills = []
         handle_command(app, user_input)
         return
 

@@ -70,9 +70,10 @@ def update_footer(app) -> None:
 
     plan_badge = f" [bold {badge_color}]│ PLAN[/]" if state.ui.plan_mode else ""
     if state.reasoning.active_skill:
-        skill_badge = f" [bold {badge_color}]│ {state.reasoning.active_skill}[/]"
-    elif state.reasoning.turn_skill:
-        skill_badge = f" [bold {badge_color}]│ auto:{state.reasoning.turn_skill}[/]"
+        skill_badge = f" [bold {badge_color}]│ ✦ 1 skill[/]"
+    elif state.reasoning.turn_skills:
+        count = len(state.reasoning.turn_skills)
+        skill_badge = f" [bold {badge_color}]│ ✦ {count} skill{'s' if count != 1 else ''}[/]"
     else:
         skill_badge = ""
     personality_badge = " [dim]│ ✦ persona[/dim]" if state.reasoning.personality else ""
@@ -517,6 +518,100 @@ def navigate_temp_menu(app, direction: int) -> None:
         menus.first().update(text)
 
 
+def _build_context_menu_text(native_context: int, automatic_context: int) -> Text:
+    from chaosz.ollama_utils import format_context_window
+
+    t = get_theme()
+    options = state.ui.context_menu_options
+    current = state.ui.context_menu_index
+    width = max(len("Auto (recommended)") + 1, *(len(format_context_window(value)) for value in options if value))
+    text = Text()
+    text.append("  SELECT CONTEXT WINDOW", style=f"bold {t.accent}")
+    text.append("   ↑/↓ or 1-9 select   Enter confirm   Esc cancel\n", style="dim")
+    text.append(
+        f"    Native: {format_context_window(native_context)}  ·  Auto: {format_context_window(automatic_context)}  ·  Applies next request\n",
+        style="dim",
+    )
+    w = width + _NUM_PREFIX_WIDTH + 2
+    text.append("    " + "─" * w + "\n", style=f"dim {t.accent}")
+    for index, value in enumerate(options):
+        label = f"Auto (recommended: {format_context_window(automatic_context)})" if value is None else format_context_window(value)
+        suffix = " (active)" if index == current else ""
+        row = (_num_prefix(index) + label + suffix).ljust(w)[:w]
+        if index == current:
+            text.append("  ▶ ", style=f"bold {t.accent}")
+            text.append(row, style=f"bold white on {t.menu_highlight}")
+        else:
+            text.append("    ")
+            text.append(row, style="dim white")
+        text.append("\n")
+    text.append("    " + "─" * w, style=f"dim {t.accent}")
+    return text
+
+
+def render_context_menu(app) -> None:
+    """Mount the Ollama context selector for the current model."""
+    from chaosz.ollama_utils import context_window_options, get_model_profile
+
+    providers, active = load_providers()
+    pdata = providers.get(active, {})
+    model = state.provider.model
+    profile = get_model_profile(model)
+    native = profile["native_context_window"]
+    automatic = profile["context_window"]
+    overrides = pdata.get("context_window_overrides") if isinstance(pdata.get("context_window_overrides"), dict) else {}
+    selected = overrides.get(model)
+    state.ui.context_menu_options = [None, *context_window_options(native)]
+    state.ui.context_menu_native = native
+    state.ui.context_menu_automatic = automatic
+    state.ui.context_menu_index = (
+        state.ui.context_menu_options.index(selected)
+        if selected in state.ui.context_menu_options else 0
+    )
+    text = _build_context_menu_text(native, automatic)
+    app.query("#context-menu").remove()
+    scroll = app.query_one("#chat-scroll", VerticalScroll)
+    scroll.mount(Static(text, id="context-menu"))
+    scroll.scroll_end(animate=False)
+
+
+def navigate_context_menu(app, direction: int) -> None:
+    total = len(state.ui.context_menu_options)
+    if not total:
+        return
+    state.ui.context_menu_index = (state.ui.context_menu_index + direction) % total
+    menus = app.query("#context-menu")
+    if menus:
+        menus.first().update(_build_context_menu_text(state.ui.context_menu_native, state.ui.context_menu_automatic))
+
+
+def confirm_context_window(app, value: int | None) -> None:
+    """Persist the selected model-scoped Ollama context window."""
+    from chaosz.ollama_utils import format_context_window, get_model_profile
+
+    providers, active = load_providers()
+    pdata = providers.get(active)
+    if not pdata or active != "ollama":
+        return
+    model = state.provider.model
+    profile = get_model_profile(model)
+    overrides = pdata.setdefault("context_window_overrides", {})
+    if value is None:
+        overrides.pop(model, None)
+        pdata["context_window"] = profile["context_window"]
+        label = f"Auto ({format_context_window(profile['context_window'])})"
+    else:
+        if value > profile["native_context_window"]:
+            return
+        overrides[model] = value
+        pdata["context_window"] = value
+        label = format_context_window(value)
+    save_providers(providers, active)
+    sync_runtime_provider_state(active, providers)
+    app._write("", Text(f"Context set to {label} for {model}. It applies on the next request.", style="green"))
+    app._update_footer()
+
+
 def _build_skill_menu_text(names: list[str], active_skill: str | None) -> Text:
     t = get_theme()
     all_entries = ["none"] + names
@@ -829,6 +924,7 @@ def confirm_plan_approval(app, choice: str) -> None:
             app._write("", Text("No plan steps to execute.", style="red"))
             return
         state.ui.plan_step_index = 0
+        state.ui.plan_step_retry_count = 0
         state.ui.plan_executing = True
         from chaosz.plan_driver import build_step_prompt
         from chaosz.session import append_to_live_session
@@ -852,8 +948,12 @@ def confirm_plan_approval(app, choice: str) -> None:
     elif choice == "Reject":
         state.ui.plan_steps = []
         state.ui.plan_goal = ""
+        state.ui.plan_step_retry_count = 0
         state.ui.plan_executing = False
         state.ui.plan_mode_this_turn = False
+        from chaosz.skills import clear_turn_skills
+        clear_turn_skills()
+        app._update_footer()
         app._write("", Text("Plan rejected.", style="dim red"))
         app._set_status("Ready")
         app.query_one("#user-input").focus()

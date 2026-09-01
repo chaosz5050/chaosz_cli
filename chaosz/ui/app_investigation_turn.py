@@ -546,6 +546,8 @@ def run_investigation_turn(app, user_input: str) -> None:
             _persist_and_render(app, f"Investigation error: {e}", style="bold red")
         finally:
             state.ui.is_thinking = False
+            from chaosz.skills import clear_turn_skills
+            clear_turn_skills()
             app.call_from_thread(app._stop_glitch)
             app.call_from_thread(app._set_input_label, "You: ")
             app.call_from_thread(app._update_footer)

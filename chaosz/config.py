@@ -136,6 +136,17 @@ receive it. Split larger designs into small modules instead of generating one
 large source file in a single tool call."""
 
 
+OLLAMA_NO_REASONING_TOOL_POLICY = """\
+\n+## Local tool-use efficiency (reasoning disabled)
+
+Reasoning is disabled for this turn. Do not produce chain-of-thought, a long
+plan, or progress narration. When a task needs tools, make the next appropriate
+tool call immediately; at most one short sentence of context is allowed before
+it. After each tool result, continue with the next concrete action. Keep source
+files modular and tool payloads small enough to complete in one response.
+For a task that needs no tools, answer directly and concisely."""
+
+
 def _read_config_file(*, require_corrupt_backup: bool = False) -> dict:
     if not os.path.exists(CONFIG_FILE):
         return {}
@@ -348,6 +359,8 @@ def build_system_prompt():
     parts = [DEFAULT_SYSTEM_PROMPT]
     if state.provider.active == "ollama":
         parts.append(OLLAMA_FILE_EDIT_POLICY)
+        if not state.reasoning.enabled:
+            parts.append(OLLAMA_NO_REASONING_TOOL_POLICY)
     parts.append(f"\nCURRENT DATE: {datetime.now().strftime('%A, %B %d, %Y')}")
     if state.workspace.working_dir:
         parts.append(f"\nCURRENT_WORKING_DIRECTORY: {state.workspace.working_dir}")
@@ -359,25 +372,31 @@ def build_system_prompt():
             "style rules to every response regardless of what task you are doing.\n"
             + state.reasoning.personality
         )
-    from chaosz.skills import get_effective_skill_name, load_skill
-    effective_skill = get_effective_skill_name()
-    if effective_skill:
-        skill_content = load_skill(effective_skill)
-        if skill_content:
-            if state.reasoning.personality:
-                parts.append(
-                    "\nNote: Both a communication style and a task skill are active. "
-                    "Let the skill govern task behavior (WHAT you do, how you structure your work). "
-                    "Let the personality govern tone (HOW you write and speak). "
-                    "Where they appear to conflict, the skill takes precedence for task behavior."
-                )
+    from chaosz.skills import get_effective_skill_names, load_skill
+    effective_skills = get_effective_skill_names()
+    if effective_skills:
+        if state.reasoning.personality:
             parts.append(
-                f"\nTask Mode — Active Skill ({effective_skill}):\n"
-                "The following instructions govern WHAT you do and HOW you approach this "
-                "type of task — methodology, workflow, conventions, and deliverable format. "
-                "Follow these task instructions precisely.\n"
-                + skill_content
+                "\nNote: Both a communication style and task skills are active. "
+                "Let the skills govern task behavior (WHAT you do, how you structure your work). "
+                "Let the personality govern tone (HOW you write and speak). "
+                "Where they appear to conflict, the skills take precedence for task behavior."
             )
+        if len(effective_skills) > 1:
+            parts.append(
+                "\nMultiple task skills are active. Apply all compatible instructions. "
+                "If instructions conflict, the earlier (higher-ranked) skill takes precedence."
+            )
+        for effective_skill in effective_skills:
+            skill_content = load_skill(effective_skill)
+            if skill_content:
+                parts.append(
+                    f"\nTask Mode — Active Skill ({effective_skill}):\n"
+                    "The following instructions govern WHAT you do and HOW you approach this "
+                    "type of task — methodology, workflow, conventions, and deliverable format. "
+                    "Follow these task instructions precisely.\n"
+                    + skill_content
+                )
     chaosz_md = _load_chaosz_md()
     if chaosz_md:
         parts.append("\nProject Context (chaosz.md):\n" + chaosz_md)

@@ -219,6 +219,9 @@ class ChaoszApp(App):
     _confirm_model_version_switch = app_rendering.confirm_model_version_switch
     _render_temp_select_menu = app_rendering.render_temp_select_menu
     _navigate_temp_menu = app_rendering.navigate_temp_menu
+    _render_context_menu = app_rendering.render_context_menu
+    _navigate_context_menu = app_rendering.navigate_context_menu
+    _confirm_context_window = app_rendering.confirm_context_window
     _render_skill_menu = app_rendering.render_skill_menu
     _navigate_skill_menu = app_rendering.navigate_skill_menu
     _render_permission_level_menu = app_rendering.render_permission_level_menu
@@ -496,6 +499,12 @@ class ChaoszApp(App):
                 state.ui.mode = "CHAT"
                 self._hide_plan_approval_display()
                 self._confirm_plan_approval("Reject")
+            elif state.ui.mode == "CONTEXT_SELECT":
+                state.ui.mode = "CHAT"
+                self.query("#context-menu").remove()
+                self._set_input_label("You: ")
+                self._set_status("Ready")
+                self._write("", Text("Context selection cancelled.", style="dim"))
             elif state.ui.mode in ("MODEL_SELECT", "MODEL_ADD_SELECT", "MODEL_SELECT_VERSION", "TEMP_SELECT"):
                 state.provider.pending = ""
                 state.ui.mode = "CHAT"

@@ -102,7 +102,8 @@ def compact_conversation(app, auto=False):
     state.background.compacting = True
     try:
         if auto:
-            app.call_from_thread(app._write, "", Text("⚠ Context at 90% — auto-compacting...", style="yellow"))
+            advice = " Use /context to choose a larger local window." if state.provider.active == "ollama" else ""
+            app.call_from_thread(app._write, "", Text("⚠ Context at 90% — auto-compacting..." + advice, style="yellow"))
         else:
             app.call_from_thread(app._write, "", Text("Compacting conversation...", style="cyan"))
 

@@ -44,6 +44,7 @@ def handle_command(app, user_input: str) -> None:
             f"  [{c}]/stats[/{c}]                      - Show token usage for current session\n"
             f"  [{c}]/compact[/{c}]                     - Summarize conversation history and reset token counter\n"
             f"  [{c}]/reason[/{c}] [{a}]on|off[/{a}]             - Toggle reasoning output when supported by the active provider\n"
+            f"  [{c}]/context[/{c}]                   - Set the active Ollama model's context window\n"
             f"  [{c}]/header[/{c}]                      - Toggle the ASCII logo header on/off\n"
             f"  [{c}]/skill[/{c}] [{a}]list[/{a}]               - Interactive skill selection menu\n"
             f"  [{c}]/skill[/{c}] [{a}]add[/{a}] [{a}]<name>[/{a}]          - Create a new skill\n"
@@ -206,6 +207,15 @@ def handle_command(app, user_input: str) -> None:
             else:
                 msg = f"Reasoning is currently {status}, but '{provider}' does not use it."
             app._write("", Text(msg, style="cyan"))
+
+    elif cmd == "/context":
+        if state.provider.active != "ollama":
+            app._write("", Text("/context configures local Ollama models only; cloud context is provider-managed.", style="yellow"))
+            return
+        state.ui.mode = "CONTEXT_SELECT"
+        app._set_input_label("[bold cyan] CONTEXT: [/bold cyan] ")
+        app._set_status("↑/↓ navigate   Enter confirm   Esc cancel")
+        app._render_context_menu()
 
     elif cmd == "/model":
         sub = args[1].lower() if len(args) > 1 else "list"

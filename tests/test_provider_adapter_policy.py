@@ -48,7 +48,7 @@ from chaosz.providers import (
     sync_runtime_provider_state,
     validate_provider_key,
 )
-from chaosz.ollama_utils import derive_model_profile
+from chaosz.ollama_utils import apply_model_profile, context_window_options, derive_model_profile, format_context_window
 from chaosz.state import state
 from chaosz.stream_adapters import (
     OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS,
@@ -57,7 +57,12 @@ from chaosz.stream_adapters import (
     _ollama_think_value,
 )
 from chaosz.ui.app_ai_turn import (
+    MAX_TRUNCATION_TOOL_ACTION_NUDGES,
+    _build_truncation_tool_action_prompt,
     _build_verification_prompt,
+    _incomplete_task_advice,
+    _output_limit_advice,
+    _timeout_advice,
     _file_edit_recovery_message,
     _is_verifiable_code_change,
     _is_verification_command,
@@ -205,6 +210,31 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertTrue(profile["tools_supported"])
         self.assertTrue(profile["vision_supported"])
 
+    def test_context_window_options_include_native_maximum_and_halve_to_8k(self) -> None:
+        self.assertEqual(context_window_options(1_000_000), [1_000_000, 524288, 262144, 131072, 65536, 32768, 16384, 8192])
+        self.assertEqual(context_window_options(65536), [65536, 32768, 16384, 8192])
+        self.assertEqual(context_window_options(4096), [4096])
+        self.assertEqual(format_context_window(1_000_000), "1M")
+        self.assertEqual(format_context_window(32768), "32K")
+
+    def test_model_scoped_context_override_does_not_leak_to_another_model(self) -> None:
+        profile = {
+            "native_context_window": 262144,
+            "context_window": 8192,
+            "max_output_tokens": 4096,
+            "profile": "balanced",
+            "architecture": "test",
+            "capabilities": [],
+        }
+        data = {"context_window_overrides": {"gemma4:12b": 32768}}
+
+        with patch("chaosz.ollama_utils.get_model_profile", return_value=profile):
+            apply_model_profile(data, "gemma4:12b")
+            self.assertEqual(data["context_window"], 32768)
+            apply_model_profile(data, "another-model")
+
+        self.assertEqual(data["context_window"], 8192)
+
     def test_sync_repairs_native_context_saved_as_runtime_context(self) -> None:
         providers = {
             "ollama": {
@@ -232,13 +262,38 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         apply_profile.assert_called_once_with(providers["ollama"], "qwen3.8:27b-q4_K_M")
         self.assertEqual(state.provider.max_ctx, 8192)
 
+    def test_sync_migrates_legacy_context_override_to_its_current_model(self) -> None:
+        providers = {
+            "ollama": {
+                "model": "gemma4:12b",
+                "local": True,
+                "model_profile": "balanced",
+                "context_window": 32768,
+                "context_window_user_override": True,
+            }
+        }
+
+        with (
+            patch("chaosz.providers.load_providers", return_value=(providers, "ollama")),
+            patch("chaosz.providers.save_providers") as save,
+        ):
+            sync_runtime_provider_state("ollama", providers)
+
+        self.assertEqual(providers["ollama"]["context_window_overrides"], {"gemma4:12b": 32768})
+        self.assertNotIn("context_window_user_override", providers["ollama"])
+        save.assert_called_once()
+
     def test_ollama_request_sends_runtime_limits_and_explicitly_disables_thinking(self) -> None:
         captured: dict = {}
 
         class _FakeOllamaClient:
             def chat(self, **kwargs):
                 captured.update(kwargs)
-                return iter([{"message": {"content": "ok"}, "done_reason": "stop", "done": True}])
+                return iter([{
+                    "message": {"thinking": "leaked chain of thought", "content": "ok"},
+                    "done_reason": "stop",
+                    "done": True,
+                }])
 
         state.provider.active = "ollama"
         state.provider.model = "qwen3.8:27b-q4_K_M"
@@ -251,12 +306,14 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
             patch("chaosz.providers.get_native_ollama_client", return_value=_FakeOllamaClient()),
             patch("chaosz.ollama_utils.ensure_runtime_context") as ensure_context,
         ):
-            list(_iter_ollama([{"role": "user", "content": "hi"}], None, state.provider.model))
+            chunks = list(_iter_ollama([{"role": "user", "content": "hi"}], None, state.provider.model))
 
         ensure_context.assert_called_once_with("qwen3.8:27b-q4_K_M", 16384)
         self.assertIs(captured["think"], False)
         self.assertEqual(captured["options"]["num_ctx"], 16384)
         self.assertEqual(captured["options"]["num_predict"], 8192)
+        self.assertNotIn("leaked chain of thought", [chunk.reasoning_line for chunk in chunks])
+        self.assertIn("ok", [chunk.text for chunk in chunks])
 
     def test_cancel_request_is_idempotent(self) -> None:
         self.assertTrue(request_cancel())
@@ -385,6 +442,22 @@ class ProviderAdapterPolicyTests(unittest.TestCase):
         self.assertFalse(_is_verification_command("ls -la"))
         self.assertIn("VERIFICATION PASS REQUIRED", _build_verification_prompt())
         self.assertIn("failed", _build_verification_prompt(True))
+
+    def test_truncation_recovery_requires_a_tool_action_not_progress_prose(self) -> None:
+        message = _build_truncation_tool_action_prompt(0)
+        final_attempt = _build_truncation_tool_action_prompt(MAX_TRUNCATION_TOOL_ACTION_NUDGES)
+
+        self.assertIn("MUST contain one appropriate tool call", message)
+        self.assertIn("Do not reply with a plan, progress update", message)
+        self.assertIn("final recovery attempt", final_attempt)
+
+    def test_failure_advice_distinguishes_output_from_context_and_ollama_timeout(self) -> None:
+        state.provider.active = "ollama"
+        state.provider.max_output_tokens = 8192
+
+        self.assertIn("not context exhaustion", _output_limit_advice())
+        self.assertIn("/context", _timeout_advice())
+        self.assertIn("Earlier tool changes were kept", _incomplete_task_advice())
 
 
 if __name__ == "__main__":

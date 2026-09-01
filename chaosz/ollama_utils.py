@@ -17,6 +17,30 @@ def _context_from_modelinfo(modelinfo: dict) -> int:
     return 8192
 
 
+def context_window_options(native_context: int) -> list[int]:
+    """Return selectable context sizes: native maximum, then powers of two to 8K."""
+    native_context = max(int(native_context or 8192), 1)
+    if native_context <= 8192:
+        return [native_context]
+    options = [native_context]
+    value = 1 << (native_context.bit_length() - 1)
+    if value == native_context:
+        value //= 2
+    while value >= 8192:
+        options.append(value)
+        value //= 2
+    return options
+
+
+def format_context_window(tokens: int) -> str:
+    """Format a context size compactly for menus and diagnostics."""
+    if tokens >= 1_000_000:
+        return f"{tokens // 1_000_000}M"
+    if tokens >= 1000:
+        return f"{tokens // 1000}K"
+    return str(tokens)
+
+
 def derive_model_profile(model_name: str, modelinfo: dict, capabilities: list | None = None,
                          model_size_bytes: int = 0) -> dict:
     """Create safe local runtime defaults from Ollama metadata.
@@ -108,7 +132,14 @@ def apply_model_profile(provider_data: dict, model_name: str) -> dict:
     provider_data["model_profile"] = profile["profile"]
     provider_data["model_architecture"] = profile["architecture"]
     provider_data["model_capabilities"] = profile["capabilities"]
-    if not provider_data.get("context_window_user_override"):
+    overrides = provider_data.get("context_window_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+        provider_data["context_window_overrides"] = overrides
+    override = overrides.get(model_name)
+    if isinstance(override, int) and 0 < override <= profile["native_context_window"]:
+        provider_data["context_window"] = override
+    else:
         provider_data["context_window"] = profile["context_window"]
     if not provider_data.get("max_output_tokens_user_override"):
         provider_data["max_output_tokens"] = profile["max_output_tokens"]

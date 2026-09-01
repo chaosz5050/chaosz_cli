@@ -372,7 +372,10 @@ def _iter_ollama(messages: list, tools, model: str) -> Iterator[StreamChunk]:
         content = msg.get("content", "")
         tool_calls = msg.get("tool_calls") or []
 
-        if thinking:
+        # Some Ollama/model combinations still include a `thinking` field even
+        # when `think=False` was requested.  Honour Chaosz's /reason off UI
+        # contract: do not render or retain that leaked reasoning.
+        if thinking and state.reasoning.enabled:
             lines, reasoning_buf = _split_reasoning_lines(thinking, reasoning_buf)
             for line in lines:
                 yield StreamChunk(reasoning_line=line)
